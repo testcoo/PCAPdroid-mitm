@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 前台服务：API 26+ 起必须显式声明 FOREGROUND_SERVICE + 具体类型；
+         只写 _SPECIAL_USE 在部分 ROM/版本上会 startForeground 抛异常。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Android 13+ 前台服务通知要显示就必须有它，且要运行时申请；
+         缺了的表现是「设置里通知是灰的、点不动」。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- PyApplication is equivalent to Python.start -->
+    <application
+        android:name="com.chaquo.python.android.PyApplication"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:usesCleartextTraffic="true"
+        android:supportsRtl="true"
+        tools:targetApi="m">
+
+        <activity
+            android:name=".LauncherActivity"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- ★ android:process=":mitm"：mitmproxy 跑在独立子进程里。
+             为什么必须拆（M2a 真机踩到的两个 P0 都源于同进程）：
+               ① 同进程 ⇒ Python 工作线程一旦卡住（mitmproxy 启动失败时在 asyncio
+                  拆 loop 阶段 await 会死锁），整个 App 的 UI 线程虽然还在跑，但
+                  服务永久存活、端口永久被占，只能靠「强行停止应用」恢复。
+               ② 拆出去之后，收尾兜底可以直接 Process.killProcess(myPid()) —— 在
+                  :mitm 里自杀，内核回收该进程所有 fd（含监听 socket），主进程
+                  （UI）完全不受影响，也不会弹「应用已停止」的崩溃框。
+             代价：静态回调/静态变量跨不了进程，状态只能靠 status.txt（我们本来就
+             用文件轮询，所以成本几乎为零）。
+             注意 Chaquopy：<application android:name="PyApplication"> 保证每个进程
+             各自初始化一次 Python，:mitm 里的 Python 环境是自动就绪的。 -->
+        <service
+            android:name=".LauncherService"
+            android:exported="false"
+            android:process=":mitm"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="run mitmproxy in the background"/>
+        </service>
+    </application>
+</manifest>

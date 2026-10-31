@@ -1,0 +1,22 @@
+<!--
+  前台服务通知的小图标。
+  通知小图标必须是「白色剪影 + 透明背景」的单色图（Android 会自己着色），
+  所以在 vector 里只画 fillColor="#FFFFFFFF" 的路径，不要加任何背景形状。
+  形状：一进一出两个箭头，示意「流量经过代理」。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- 向右的箭头（上半） -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,9 L14,9 L14,6 L19,11 L14,16 L14,13 L4,13 Z" />
+
+    <!-- 向左的箭头（下半） -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M20,15 L10,15 L10,12 L5,17 L10,22 L10,19 L20,19 Z" />
+</vector>
