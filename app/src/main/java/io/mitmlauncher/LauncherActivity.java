@@ -225,22 +225,39 @@ public class LauncherActivity extends Activity {
     /**
      * 让参数输入框失焦并收起软键盘。
      *
-     * ★ 光 clearFocus() 不够：它只移走焦点，输入法可能仍然挂在屏幕上。
-     *   要真正收起必须调 InputMethodManager.hideSoftInputFromWindow()。
+     * 三个要点，缺一个就会「点一次只丢焦点、不收键盘，要点第二次才收」：
      *
-     * ★ 前提：布局根容器设了 focusable + focusableInTouchMode。否则 clearFocus()
-     *   之后 Android 找不到别的可获焦 View，会把焦点又还给唯一的 EditText。
+     * ★ ① 顺序：**先清焦点，再收键盘**。
+     *   前一版是反着来的（先 getCurrentFocus() 取 token，再 clearFocus），
+     *   于是拿的是「输入框的」token，等于对着一个仍持有焦点的输入框收键盘 ——
+     *   系统认为输入目标还在，hide 请求被忽略。
+     *
+     * ★ ② 收键盘用**根布局的** token，不要依赖 getCurrentFocus()。
+     *   getCurrentFocus() 可能返回 null，一旦为 null，`if (focused != null)`
+     *   会把整个收键盘动作跳过 —— 焦点丢了、键盘却留着。
+     *   根布局只要已 attach 就一定有 token，不存在这个失败分支。
+     *
+     * ★ ③ 显式把焦点交给根布局（requestFocus），而不是让它「无主」。
+     *   否则输入框仍是窗口里唯一可获焦的 View，框架可能又把焦点还给它。
+     *   前提：根布局设了 focusable + focusableInTouchMode（见 layout）。
+     *
+     * 另外补一次 post()：焦点变化落到 InputMethodManager 内部是异步的，
+     * 部分 ROM 上同步调用的 hide 会被随后的焦点变化覆盖，下一帧再收一次兜住。
      */
     private void clearArgsFocus() {
-        View focused = getCurrentFocus();
+        View root = findViewById(R.id.root);
         argsBox.clearFocus();
-        if (focused != null) {
-            InputMethodManager imm =
-                    (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-            if (imm != null) {
-                imm.hideSoftInputFromWindow(focused.getWindowToken(), 0);
-            }
+        root.requestFocus();
+        if (root.getWindowToken() == null) {
+            return;                     // 还没 attach（理论上不会走到）
         }
+        InputMethodManager imm =
+                (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (imm == null) {
+            return;
+        }
+        imm.hideSoftInputFromWindow(root.getWindowToken(), 0);
+        root.post(() -> imm.hideSoftInputFromWindow(root.getWindowToken(), 0));
     }
 
     // ------------------------------------------------------------ buttons
