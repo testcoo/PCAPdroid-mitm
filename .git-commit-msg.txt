@@ -1,60 +1,68 @@
-v0.3.2: 日志改增量 append 渲染，修「新日志一来就跳回顶部」
+v0.3.3: 日志渲染回归简单实现，删掉增量 append 那一套
 
-## 问题
+## 起因
 
-日志区有三层叠加的滚动缺陷：
-  1. 日志 TextView 开了 textIsSelectable（长按复制），它内部因此有一个 Editor
-     管光标/选区。setText() 替换全文后光标被归零，TextView 会向父 ScrollView
-     发「把光标滚进可视区」的请求 ⇒ 界面被强行滚回顶部。
-  2. 这个「程序性滚动」又被 setOnScrollChangeListener 误当成用户操作，把
-     autoScroll 置为 false ⇒ 之后再也不自动滚（永久失效）。
-  3. post(fullScroll) 与布局完成的顺序不确定 ⇒ 偶发。
+v0.3.2 用「增量 append」修「新日志一来就跳回顶部」。真机实测后发现问题并未解决，
+且现象更新：**日志行数较少时，界面会吸附到顶部或底部**（取决于上次点到哪里）。
+根因是 textIsSelectable 让 TextView 内部有一个 Editor 管光标/选区，**文本长度一变
+（不只是 setText，append 也算）它就会为「把光标滚进可视区」向父容器发请求**。
+v0.3.2 只做到「不替换文本」，但没堵住这一层。
 
-用户可见现象：滑到中间看历史，新日志一来跳回顶部；点启动/停止必定跳回顶部。
+另外实测确认：ScrollView 里选中文字后**拖手柄到屏幕边缘不会自动滚动**（那是
+NestedScrollView / RecyclerView 的能力）。也就是「在 ScrollView 里做选中」这个
+交互本身是残缺的，不是可修的问题。
 
-## 修法：改用增量 append
+## 改法：不做增量，改成「不在底部就不动」
 
-setText(全文) 会替换文本 → 光标归零 → 触发「滚进可视区」请求。
-append() 只往尾部追加、不替换文本 → 不产生该请求。**根因消失**，且带来
-附带收益：屏幕内容只增不减，用户翻历史时位置天然稳定；每轮只读新增字节，
-不再重读 64KB 并重排整段文本。
+新增规则两条，代替原来的日志渲染逻辑：
 
-具体改动（LauncherActivity）：
-  · tailLog 改为「按字节偏移增量读取 + append」
-  · 新增 logOffset（已消费到的字节偏移）；-1 表示需要冷启动
-  · 新增 coldStartLog()：首次/截断后铺最近一段（尾部 64KB 且最多 200 行）
-  · 新增 appendLogText()：超限时从头部裁剪，控制文本长度
-  · 新增 LOG_MAX_CHARS = 200_000：增量 append 的代价是文本只增不减，
-    必须有上限，超出后保留尾部一半并从换行处切开
-  · 删除 autoScroll / setOnScrollChangeListener / isScrolledToBottom
-    （不再需要状态位；每次刷新前现读 canScrollVertically(1)，原生 API
-     自动处理 padding/layout，无需容差系数）
-  · 删除已无用的 LOG_TAIL_LINES 与只写不读的 logSize
-  · buffer 显式设为 TextView.BufferType.EDITABLE，避免 append 因类型不符
-    而在内部隐式走一次 setText
+  ① 在底部（含 8dp 容差）→ 重渲染最后 LOG_TAIL_LINES(80) 行 + 滚到底
+  ② 不在底部（用户翻看中）→ **一个字节都不动**
 
-## 边界处理（增量渲染必须考虑的 4 点）
+规则② 是整个方案的关键：不渲染 ⇒ TextView 不变 ⇒ 屏幕物理上不可能移动。
+用 ~10 行拿到「增量 append」想达到的「位置稳定」，而后者要 ~70 行处理字节偏移、
+半行、截断、编码等边界。**需求减少 ⇒ 代码减少。**
 
-  ① 只消费到最后一个 '\n' —— '\n' 是 ASCII，不会落在 UTF-8 多字节序列中间，
-     所以偏移永远停在字符边界，不切碎汉字
-  ② 没写完的半行留给下一轮，不显示残缺内容
-  ③ 文件变小（清空 / Python 重开）⇒ 丢弃偏移，重走冷启动
-  ④ 偏移按字节推进：用 chunk.getBytes("UTF-8").length 而不是 String.length()
-     （后者是 UTF-16 码元数，遇汉字/emoji 会与实际字节数不符，越推越偏致乱码）
+## 删除（约 165 行）
+
+  · logOffset 字段及其「字节偏移」机制
+  · LOG_MAX_CHARS / LOG_COLD_BYTES / LOG_COLD_LINES
+  · coldStartLog()
+  · appendLogText()
+  · 旧 tailLog()（含 25 行讲 4 个边界的 javadoc）
+  · 旧 isAtBottom()（纯 canScrollVertically 版）
+
+## 新增（约 58 行）
+
+  · LOG_TAIL_LINES / LOG_TAIL_BYTES / BOTTOM_TOLERANCE_DP / logSize
+  · 新 tailLog()：先判断是否在底部，不在就直接 return
+  · 新 isAtBottom()：子 View 底边 - scrollY - 视口高度 ≤ 8dp 容差
+    （纯 canScrollVertically 会在「手指拖到底但差几像素松手」时误判成没到底）
+  · copyLog()：复制界面显示的 80 行到剪贴板 + Toast
+
+净减约 107 行（Java 文件 211 行改动，-195/+107）。
 
 ## 界面
 
-  · 清空按钮改回原生 Button 样式（原来只有文字，不明显），去掉
-    borderlessButtonStyle 与 12sp 字号
-  · 清空按钮移到「日志」标题右侧（原被 layout_weight=1 推到了屏幕另一端）
-  · 日志区保留 textIsSelectable（长按选中复制），滚动修好后不再冲突
+  · logView 去掉 textIsSelectable（这是跳动的源头）
+  · 新增「复制」按钮：放在「日志」标题右侧（高频、手边）
+  · 「清空」按钮移到日志行的最右端，与「复制」隔开（破坏性操作，防误点）
+    布局： 日志 [复制] .......... [清空]
+  · 新增 strings：btn_copy_log / copy_log_done / copy_log_empty
+
+## 自愈特性（无需额外状态管理）
+
+  · 清空日志后：界面文本为空 ⇒ 子 View 高度 0 ⇒ isAtBottom() 返回 true
+    ⇒ 下一轮自动重新渲染
+  · 翻看中不推进 logSize ⇒ 滑回底部时立刻补上最新内容
+  · 首次进入：内容为空 ⇒ 同样走 isAtBottom()=true ⇒ 立刻渲染
 
 ## 版本
 
-  · versionCode 36 / versionName "0.3.2"
+  · versionCode 37 / versionName "0.3.3"
 
-## 未做（已确认推迟）
+## 未做
 
-  · 复制当前日志 / 导出全部日志按钮
-  · 自定义 ScrollView 兜底（会破坏「拖选择手柄到边缘自动滚动」，先不加；
-    若真机实测仍有残留跳动再加）
+  · 完整日志的导出（计划放到设置菜单；现在界面只能看到最后 80 行，
+    而 launcher.log 在应用私有目录，普通文件管理器看不到）
+  · 自定义 ScrollView 兜底（去掉 textIsSelectable 后没必要；若实测仍跳再加）

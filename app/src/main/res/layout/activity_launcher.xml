@@ -73,27 +73,42 @@
             android:textSize="17sp"
             android:textStyle="bold" />
 
+        <!-- 复制：高频操作，紧跟在标题右侧 -->
         <Button
-            android:id="@+id/clearLogButton"
+            android:id="@+id/copyLogButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="12dp"
             android:minWidth="0dp"
             android:paddingStart="12dp"
             android:paddingEnd="12dp"
-            android:text="@string/btn_clear_log" />
+            android:text="@string/btn_copy_log" />
 
-        <!-- 占位：把剩余空间全部吃掉，按钮才会紧跟在标题右侧而不是被推到屏幕另一端 -->
+        <!-- 占位：把剩余空间全部吃掉，把「清空」推到屏幕另一端，
+             与「复制」隔开，降低误点（清空是破坏性操作）。 -->
         <View
             android:layout_width="0dp"
             android:layout_height="1dp"
             android:layout_weight="1" />
+
+        <Button
+            android:id="@+id/clearLogButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="@string/btn_clear_log" />
     </LinearLayout>
 
     <!--
-      日志区：ScrollView 提供滚动与「滚到底」能力，内层 TextView 负责显示与长按选中。
-      两者 id 都要有：ScrollView 给 fullScroll() / canScrollVertically() 用，
-      TextView 给 append() / getText() 用。
+      日志区：ScrollView 提供滚动与「滚到底」能力，内层 TextView 负责显示。
+      两者 id 都要有：ScrollView 给 fullScroll() / getChildAt() 用，
+      TextView 给 setText() / getText() 用。
+
+      ★ logView **不开** textIsSelectable：可选中会让 TextView 内部有一个 Editor
+        管光标/选区，文本变化时它会请求「把光标滚进可视区」，导致翻看日志时界面
+        自己跳走。复制改用标题栏的「复制」按钮（读 logView 的文本）。
     -->
     <ScrollView
         android:id="@+id/logScroll"
@@ -110,7 +125,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:fontFamily="monospace"
-            android:textIsSelectable="true"
             android:textSize="10sp" />
     </ScrollView>
 
