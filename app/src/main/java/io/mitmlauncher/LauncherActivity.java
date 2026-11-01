@@ -11,6 +11,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ScrollView;
@@ -178,9 +179,9 @@ public class LauncherActivity extends Activity {
         argsBox.setText(saved != null ? saved : DEFAULT_ARGS);
 
         // ★ 不让输入框自动获得焦点：否则一打开 App 就弹软键盘、遮挡日志区。
-        //   布局里根容器已设 focusable/focusableInTouchMode，这里清掉 EditText
-        //   自己的焦点即可（点击它仍可正常聚焦编辑）。
-        argsBox.clearFocus();
+        //   抢焦点的完整逻辑在 onResume() 里（onCreate 只在首次创建时跑，
+        //   从后台切回来走的是 onRestart → onResume，这里清一次不够）。
+        clearArgsFocus();
 
         // 记下默认字色，出错时临时改成红色，恢复时切回来。
         defaultStatusColor = statusView.getCurrentTextColor();
@@ -188,6 +189,12 @@ public class LauncherActivity extends Activity {
         toggleButton.setOnClickListener(v -> onToggleClicked());
         copyLogButton.setOnClickListener(v -> copyLog());
         clearLogButton.setOnClickListener(v -> clearLog());
+
+        // ★ 点击空白处让输入框失焦（并收起键盘）。
+        //   EditText 的默认行为是「点外部不失焦」，所以要显式处理。
+        //   监听设在根布局上 = 只有点到没被其他控件消费的区域才触发，
+        //   点按钮/输入框时事件被它们自己消费，不受影响。
+        findViewById(R.id.root).setOnClickListener(v -> clearArgsFocus());
 
         refreshButton();
         requestNotificationPermission();
@@ -199,14 +206,49 @@ public class LauncherActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        // ★ 每次回到前台都收走输入框焦点并收起键盘。
+        //   为什么必须放这里（而不是只在 onCreate）：从后台切回来走的是
+        //   onRestart → onStart → onResume，**onCreate 不会再跑**；而且系统会
+        //   恢复离开时的焦点状态，EditText 会记得自己曾是焦点并自动弹出输入法。
+        //   放在 onResume 就覆盖了「首次进入 / 后台切回 / 多任务回来」全部路径。
+        clearArgsFocus();
+    }
+
+    @Override
     protected void onDestroy() {
         handler.removeCallbacks(logPoller);
         super.onDestroy();
     }
 
+    /**
+     * 让参数输入框失焦并收起软键盘。
+     *
+     * ★ 光 clearFocus() 不够：它只移走焦点，输入法可能仍然挂在屏幕上。
+     *   要真正收起必须调 InputMethodManager.hideSoftInputFromWindow()。
+     *
+     * ★ 前提：布局根容器设了 focusable + focusableInTouchMode。否则 clearFocus()
+     *   之后 Android 找不到别的可获焦 View，会把焦点又还给唯一的 EditText。
+     */
+    private void clearArgsFocus() {
+        View focused = getCurrentFocus();
+        argsBox.clearFocus();
+        if (focused != null) {
+            InputMethodManager imm =
+                    (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.hideSoftInputFromWindow(focused.getWindowToken(), 0);
+            }
+        }
+    }
+
     // ------------------------------------------------------------ buttons
     /** 单按钮：未运行 → 启动；运行中 → 停止。 */
     private void onToggleClicked() {
+        // ★ 点按钮就收走输入框焦点：用户的意图已经表达完（要启动/停止了），
+        //   这时键盘继续占着半个屏幕没有意义。
+        clearArgsFocus();
         if (pending) {
             return;
         }

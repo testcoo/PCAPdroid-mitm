@@ -11,6 +11,7 @@ import asyncio
 import errno
 import logging
 import os
+import shlex
 import socket
 import sys
 import threading
@@ -271,9 +272,30 @@ def _patch_platform():
 
 
 def _parse_options(parser, opts, args_text):
-    """统一处理参数：--set 必须 defer，否则 addon 注册的选项会静默用默认值。"""
+    """统一处理参数：--set 必须 defer，否则 addon 注册的选项会静默用默认值。
+
+    ★ 用 shlex.split 而不是 str.split：
+      官方 CLI 的 argv 是**操作系统（shell）已经切分好**的列表，shell 会处理引号
+      和转义。我们是自己从一整串文本切的，等于在替代 shell 的角色 —— 而
+      `str.split()` 只会按空白切分、**完全不认引号**，于是：
+
+          args_text = '--set foo="a b"'
+          str.split()   → ['--set', 'foo="a', 'b"']      ← 值被切坏
+          shlex.split() → ['--set', 'foo=a b']           ← 正确
+
+      换行等空白两种切法都等价（都是分隔符），所以切分逻辑的差别只在引号/转义。
+      注意 shlex 的规则与 POSIX shell 一致：支持 "…"、'…' 和反斜杠转义；
+      若用户输入的引号本身不配对，shlex 会抛 ValueError，这里退化成 str.split()
+      并记一条警告 —— 宁可让参数按老办法切，也不要因为一个引号直接崩掉。
+    """
     from mitmproxy.tools.main import process_options
-    args = parser.parse_args(args_text.split())
+    try:
+        argv = shlex.split(args_text)
+    except ValueError:
+        logging.warning("[launcher] unbalanced quotes in args, "
+                        "falling back to whitespace split: %r", args_text)
+        argv = args_text.split()
+    args = parser.parse_args(argv)
     opts.set(*args.setoptions, defer=True)
     process_options(parser, opts, args)
     return args

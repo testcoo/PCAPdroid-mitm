@@ -12,6 +12,7 @@
     4. 日志用 monospace：日志是等宽对齐的，等宽字体更易读。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:focusable="true"
