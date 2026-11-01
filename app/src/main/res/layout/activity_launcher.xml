@@ -14,6 +14,8 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:focusable="true"
+    android:focusableInTouchMode="true"
     android:orientation="vertical"
     android:paddingStart="24dp"
     android:paddingEnd="24dp"
@@ -29,13 +31,27 @@
         android:textSize="17sp"
         android:textStyle="bold" />
 
+    <!--
+      参数输入框：多行，但**限高**。
+
+      ★ 为什么要限高：参数框是 wrap_content，参数里插了几个换行就会被撑得很高，
+        把下面的日志区挤扁，且要滚动很久才能看到启动按钮 —— 一旦误粘一大段文本，
+        整个界面都会变得难用。这里用 maxHeight 封顶，超出部分由 EditText 自己
+        内部滚动（多行 EditText 自带上滚能力，不需要额外包 ScrollView）。
+
+      ★ 没有"恢复默认"入口（用户明确不要）：改坏了就自己重新输入。
+    -->
     <EditText
         android:id="@+id/argsBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:gravity="top|start"
         android:hint="@string/args_hint"
         android:importantForAutofill="no"
         android:inputType="textNoSuggestions|textMultiLine"
+        android:maxHeight="120dp"
+        android:minHeight="48dp"
+        android:scrollbars="vertical"
         android:textSize="14sp" />
 
     <Button

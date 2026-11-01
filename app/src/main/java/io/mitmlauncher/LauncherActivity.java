@@ -3,6 +3,7 @@ package io.mitmlauncher;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
@@ -36,6 +37,19 @@ public class LauncherActivity extends Activity {
 
     private static final String DEFAULT_ARGS = "-p 8080 --set connection_strategy=lazy";
     private static final long LOG_POLL_MS = 700;
+
+    /** SharedPreferences 的文件名与键。只存一项：上次成功运行过的参数。 */
+    private static final String PREFS = "mitm";
+    private static final String PREF_LAST_ARGS = "last_args";
+
+    /**
+     * 本次启动实际发出去的参数。
+     *
+     * ★ 存在的理由：参数的保存时机选在「真的跑起来」（状态变成 running）而非
+     *   「点了启动」，所以要在启动时先把参数存下来，等 running 到来再写盘。
+     *   null 表示本次没有发起过启动（例如 App 刚打开、发现服务还在跑）。
+     */
+    private String pendingArgs;
 
     private EditText argsBox;
     private Button toggleButton;
@@ -156,7 +170,18 @@ public class LauncherActivity extends Activity {
         logScroll = findViewById(R.id.logScroll);
         copyLogButton = findViewById(R.id.copyLogButton);
 
-        argsBox.setText(DEFAULT_ARGS);
+        // ★ 参数预填：上次**成功运行过**的那串；没有记录才用内置默认值。
+        //   为什么不存「最后输入的」：失败/手误的配置不该变成下次的默认值，
+        //   否则用户会一次次打开 App 面对一个跑不起来的配置。
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String saved = prefs.getString(PREF_LAST_ARGS, null);
+        argsBox.setText(saved != null ? saved : DEFAULT_ARGS);
+
+        // ★ 不让输入框自动获得焦点：否则一打开 App 就弹软键盘、遮挡日志区。
+        //   布局里根容器已设 focusable/focusableInTouchMode，这里清掉 EditText
+        //   自己的焦点即可（点击它仍可正常聚焦编辑）。
+        argsBox.clearFocus();
+
         // 记下默认字色，出错时临时改成红色，恢复时切回来。
         defaultStatusColor = statusView.getCurrentTextColor();
 
@@ -211,7 +236,32 @@ public class LauncherActivity extends Activity {
         lastStatusContent = "";
         setPending(true, true);
         showStatus("正在启动…", false);
+        // ★ 记下本次真正发出去的参数。等状态变成 running（= 真的 listen 成功）
+        //   再写盘，见 applyState()。
+        pendingArgs = args;
         LauncherService.start(this, args);
+    }
+
+    /**
+     * 把本次成功运行的参数写进 SharedPreferences（供下次打开 App 预填）。
+     *
+     * ★ 只在真的跑起来了才写（applyState 的 running 分支调用）—— 失败或手误的
+     *   配置不该成为下次的默认值，否则用户会一次次面对一个跑不起来的配置。
+     * ★ 只写一次：applyState 开头有「state+detail 未变则 return」的判重，而同一次
+     *   运行里 running 的 detail（监听地址）固定，所以这里最多执行一次。
+     *   保险起见还是比对一下，避免边界情况下重复写盘。
+     */
+    private void saveArgsIfRunning() {
+        String args = pendingArgs;
+        if (args == null || args.isEmpty()) {
+            return;                 // 本次不是我们发起的启动（如 App 重开、服务已在跑）
+        }
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (args.equals(prefs.getString(PREF_LAST_ARGS, null))) {
+            return;                 // 没变化，不必写
+        }
+        prefs.edit().putString(PREF_LAST_ARGS, args).apply();
+        Log.i(TAG, "saved args for next launch: " + args);
     }
 
     private void stopMitm() {
@@ -331,6 +381,10 @@ public class LauncherActivity extends Activity {
         String text;
         switch (newState) {
             case "running":
+                // ★ 到这里说明 mitmproxy 已经真的在监听了 ⇒ 这串参数是可用的，
+                //   记下来当作下次打开 App 的预填值。放在这里而不是「点了启动」时，
+                //   是为了不把失败/手误的配置变成下次的默认值。
+                saveArgsIfRunning();
                 text = detail.isEmpty() ? "运行中" : "运行中 · " + detail;
                 break;
             case "starting":
