@@ -130,7 +130,7 @@ public class LauncherActivity extends Activity {
         root.setPadding(pad, pad, pad, pad);
 
         TextView label = new TextView(this);
-        label.setText("mitmproxy 参数（例如 -p 8080 -s /path/script.py）");
+        label.setText("mitmproxy 参数");
         root.addView(label);
 
         argsBox = new EditText(this);
@@ -153,13 +153,6 @@ public class LauncherActivity extends Activity {
         // 记下默认字色，出错时临时改成红色，恢复时切回来。
         defaultStatusColor = statusView.getCurrentTextColor();
         root.addView(statusView);
-
-        infoView = new TextView(this);
-        infoView.setTextSize(11);
-        // 版本信息现在由 :mitm 子进程写入日志（launcher.py 的 version()），
-        // 主进程不再为了显示它而把 libpython 再加载一份（省 60~120MB）。
-        infoView.setText("Python 环境跑在后台 :mitm 进程里");
-        root.addView(infoView);
 
         logView = new TextView(this);
         logView.setTextSize(10);
