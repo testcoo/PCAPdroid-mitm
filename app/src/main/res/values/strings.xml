@@ -1,3 +1,11 @@
 <resources>
     <string name="app_name">MitmLauncher</string>
+
+    <!-- 界面文案。集中放这里，改文案不用动代码。 -->
+    <string name="args_label">mitmproxy 参数</string>
+    <string name="args_hint">例如 -p 8080</string>
+    <string name="btn_start">启动</string>
+    <string name="btn_stop">停止</string>
+    <string name="btn_clear_log">清空</string>
+    <string name="log_label">日志</string>
 </resources>

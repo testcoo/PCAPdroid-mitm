@@ -22,10 +22,10 @@ android {
         applicationId "io.mitmlauncher"
         minSdk 24
         targetSdk 34
-        // v0.3.0：清理上游遗产（删 JS 注入器/VPN 服务/上游 UI，项目收敛为 ~8 个源文件）。
+        // v0.3.1：界面改用布局文件 + 包名迁移到 io.mitmlauncher。
         // 每次要出 APK 前顺手 bump，装到手机上能一眼确认装的是哪一版。
-        versionCode 34
-        versionName "0.3.0"
+        versionCode 35
+        versionName "0.3.1"
 
         // see productFlavors below
         /*ndk {
@@ -91,7 +91,7 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    namespace 'com.pcapdroid.mitm'
+    namespace 'io.mitmlauncher'
 }
 
 dependencies {}

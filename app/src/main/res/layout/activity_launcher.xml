@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MitmLauncher 主界面。
+
+  设计约束（都很重要）：
+    1. 工程**没有 androidx**，所以只能用平台控件（LinearLayout / TextView / Button /
+       EditText / ScrollView），不能用 ConstraintLayout / AppCompat*。
+    2. 左右留白给足（24dp）：手机上贴边看着很挤，且手指容易误触边缘。
+    3. 日志区是「可选中复制 + 自动滚到底」，因此必须是
+       ScrollView(带 id) > TextView(带 id)，不能直接把 TextView 当滚动容器
+       —— TextView + ScrollingMovementMethod 无法用 fullScroll() 精确滚到底。
+    4. 日志用 monospace：日志是等宽对齐的，等宽字体更易读。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:paddingTop="16dp"
+    android:paddingBottom="16dp">
+
+    <!-- 标题：字号比正文大一档，并用粗体把它和控件区分开 -->
+    <TextView
+        android:id="@+id/argsLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/args_label"
+        android:textSize="17sp"
+        android:textStyle="bold" />
+
+    <EditText
+        android:id="@+id/argsBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="@string/args_hint"
+        android:importantForAutofill="no"
+        android:inputType="textNoSuggestions|textMultiLine"
+        android:textSize="14sp" />
+
+    <Button
+        android:id="@+id/toggleButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="@string/btn_start" />
+
+    <TextView
+        android:id="@+id/statusView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:textSize="14sp" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="12dp"
+        android:background="?android:attr/listDivider" />
+
+    <!-- 日志头部：标题 + 清空按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/log_label"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/clearLogButton"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="@string/btn_clear_log"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!--
+      日志区：ScrollView 提供滚动与「滚到底」能力，内层 TextView 负责
+      可选中复制。两者 id 都要有：ScrollView 给 fullScroll() 用，
+      TextView 给 setText() 用。
+    -->
+    <ScrollView
+        android:id="@+id/logScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="4dp"
+        android:layout_weight="1"
+        android:background="?android:attr/colorBackground"
+        android:fadeScrollbars="false"
+        android:scrollbarStyle="insideInset">
+
+        <TextView
+            android:id="@+id/logView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true"
+            android:textSize="10sp" />
+    </ScrollView>
+
+</LinearLayout>

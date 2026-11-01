@@ -1,4 +1,4 @@
-package com.pcapdroid.mitm;
+package io.mitmlauncher;
 
 import android.app.Notification;
 import android.app.NotificationChannel;

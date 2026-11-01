@@ -1,4 +1,4 @@
-package com.pcapdroid.mitm;
+package io.mitmlauncher;
 
 import android.app.Activity;
 import android.graphics.Color;
@@ -6,12 +6,10 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
-import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.File;
@@ -38,13 +36,30 @@ public class LauncherActivity extends Activity {
 
     private EditText argsBox;
     private Button toggleButton;
+    private Button clearLogButton;
     private TextView statusView;
-    private TextView infoView;
     private TextView logView;
+    private ScrollView logScroll;
     /** statusView 的默认字色。出错时改成红色，恢复时切回来（不依赖主题资源）。 */
     private int defaultStatusColor;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long logSize = -1;
+
+    /**
+     * 日志自动滚动到底部。
+     *
+     * ★ 为什么需要：早期用 {@code TextView + ScrollingMovementMethod}，每次
+     *   {@code setText()} 都会把滚动位置**重置到顶部** —— 也就是说日志一刷新，
+     *   用户眼前跳回旧内容，**根本看不到最新一行**。改成 ScrollView 后由我们来
+     *   决定滚到哪里。
+     *
+     * 用意：用户手动往上翻看历史时，不该被自动滚动「抢」回去。所以
+     *   · 默认开启自动滚底；
+     *   · 一旦用户手动上滑（离开底部），就自动关闭；
+     *   · 用户主动滑回底部，重新开启。
+     * 用一个开关按钮会让界面多一个控件，这里用「位置」隐式切换更轻。
+     */
+    private boolean autoScroll = true;
 
     /** status.txt 里最后处理过的序号（Python 侧单调递增）。用它判重，不用 lastModified。 */
     private long lastSeq = -1;
@@ -123,44 +138,29 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // ★ 界面改用布局文件 res/layout/activity_launcher.xml。
+        //   原因：代码建 View 时每加一个控件都要改 onCreate，且间距/字号散落在
+        //   Java 里，没法一眼看全；布局文件里这些都是声明式的。
+        setContentView(R.layout.activity_launcher);
 
-        int pad = (int) (12 * getResources().getDisplayMetrics().density);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(pad, pad, pad, pad);
+        argsBox = findViewById(R.id.argsBox);
+        toggleButton = findViewById(R.id.toggleButton);
+        clearLogButton = findViewById(R.id.clearLogButton);
+        statusView = findViewById(R.id.statusView);
+        logView = findViewById(R.id.logView);
+        logScroll = findViewById(R.id.logScroll);
 
-        TextView label = new TextView(this);
-        label.setText("mitmproxy 参数");
-        root.addView(label);
-
-        argsBox = new EditText(this);
         argsBox.setText(DEFAULT_ARGS);
-        argsBox.setSingleLine(false);
-        root.addView(argsBox, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        LinearLayout buttons = new LinearLayout(this);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
-
-        // 单个按钮：启动 / 停止 二合一，靠文字与点击行为切换
-        toggleButton = new Button(this);
-        toggleButton.setOnClickListener(v -> onToggleClicked());
-        buttons.addView(toggleButton);
-
-        root.addView(buttons);
-
-        statusView = new TextView(this);
         // 记下默认字色，出错时临时改成红色，恢复时切回来。
         defaultStatusColor = statusView.getCurrentTextColor();
-        root.addView(statusView);
 
-        logView = new TextView(this);
-        logView.setTextSize(10);
-        logView.setMovementMethod(new ScrollingMovementMethod());
-        root.addView(logView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        toggleButton.setOnClickListener(v -> onToggleClicked());
+        clearLogButton.setOnClickListener(v -> clearLog());
 
-        setContentView(root);
+        // 用户手动上滑看历史时不要把他拽回底部；滑回底部则恢复自动滚动。
+        logScroll.setOnScrollChangeListener((v, x, y, oldX, oldY) -> {
+            autoScroll = isScrolledToBottom();
+        });
 
         refreshButton();
         requestNotificationPermission();
@@ -267,7 +267,7 @@ public class LauncherActivity extends Activity {
      */
     private void refreshButton() {
         boolean isRunning = "running".equals(state);
-        toggleButton.setText(isRunning ? "停止" : "启动");
+        toggleButton.setText(isRunning ? R.string.btn_stop : R.string.btn_start);
         toggleButton.setEnabled(!pending);
     }
 
@@ -474,16 +474,27 @@ public class LauncherActivity extends Activity {
     }
 
     // ------------------------------------------------------------ logging
+    /**
+     * 读日志尾巴并刷到界面。
+     *
+     * ★ 只在**文件长度变化**时才读（{@code size == logSize} 直接返回），所以空闲时
+     *   这一趟是零 I/O。但「长度变化」不等于「内容有新增」——文件被清空/重建时长度
+     *   会变小，那种情况也要刷新，所以用 {@code !=} 而不是 {@code >}。
+     *
+     * 只读尾部 64KB 并取最后 LOG_TAIL_LINES 行：日志文件可能很大，全读会拖慢主线程。
+     */
     private void tailLog() {
         File log = new File(getFilesDir(), "launcher.log");
         if (!log.exists()) {
-            logView.setText("(还没有日志: " + log.getAbsolutePath() + ")");
+            logView.setText("");
+            logSize = -1;
             return;
         }
         long size = log.length();
         if (size == logSize) {
             return;
         }
+        boolean shrank = logSize >= 0 && size < logSize;
         logSize = size;
         StringBuilder sb = new StringBuilder();
         try (RandomAccessFile raf = new RandomAccessFile(log, "r")) {
@@ -501,6 +512,49 @@ public class LauncherActivity extends Activity {
             sb.append("读日志失败: ").append(t);
         }
         logView.setText(sb.toString());
+
+        // ★ 自动滚到底。
+        //   走到这里说明**文件大小已经变了**（开头 `size == logSize` 就 return 了），
+        //   所以只要不是「变小」（被清空/重建）就一定有新增内容。
+        //   ★ 不能拿「文本长度有没有变长」来判断：日志到 LOG_TAIL_LINES 行上限后，
+        //     长度就恒定不变了 —— 那样滚动会在跑满 80 行后**永久失效**。
+        if (autoScroll && !shrank) {
+            logScroll.post(() -> logScroll.fullScroll(ScrollView.FOCUS_DOWN));
+        }
+    }
+
+    /** 是否已经滚到底（留 4dp 容差，避免像素取整导致永远判不到底）。 */
+    private boolean isScrolledToBottom() {
+        int childHeight = logScroll.getChildCount() > 0
+                ? logScroll.getChildAt(0).getHeight() : 0;
+        int tolerance = (int) (4 * getResources().getDisplayMetrics().density);
+        return logScroll.getScrollY() + logScroll.getHeight() >= childHeight - tolerance;
+    }
+
+    /**
+     * 清空日志。
+     *
+     * ★ 用「截断为空」而不是「删除文件」。
+     *   原因：Python 侧的 logging.FileHandler 会**一直持有该文件的 fd**。
+     *   在 Linux/Android 上，删除一个仍被打开的文件，只是移走目录项，inode 还在
+     *   （fd 仍指向它）。之后 Python 的写入会落到那个「看不见的」inode 上 ——
+     *   表现为日志从此不再更新，而文件也永远不会被重建（FileHandler 只在构造时
+     *   打开一次，即下一次 run() 才会重新 open）。
+     *   截断则作用于同一个 inode：FileHandler 以 append 方式打开（O_APPEND），
+     *   下一次写入会自动落回偏移 0，日志立刻恢复正常。
+     */
+    private void clearLog() {
+        File log = new File(getFilesDir(), "launcher.log");
+        if (log.exists()) {
+            try (RandomAccessFile raf = new RandomAccessFile(log, "rw")) {
+                raf.setLength(0);
+            } catch (Throwable t) {
+                Log.w(TAG, "clear log failed", t);
+            }
+        }
+        logSize = -1;
+        autoScroll = true;
+        logView.setText("");
     }
 
     private void requestNotificationPermission() {
