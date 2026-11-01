@@ -17,6 +17,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -247,24 +248,34 @@ public class LauncherActivity extends Activity {
      * ★ 也不再需要手工 post() 补第二次：声明式调用没有「被覆盖」的问题。
      */
     private void clearArgsFocus() {
+        diag("clearFocus: focused=" + getCurrentFocus() + " imeVisible=" + isImeVisible());
+        argsBox.clearFocus();
         WindowInsetsControllerCompat c =
                 WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
-        diag("clearFocus: before focused=" + getCurrentFocus()
-                + " imeVisible=" + (c != null && c.isVisible(WindowInsetsCompat.Type.ime())));
-        argsBox.clearFocus();
         if (c != null) {
             c.hide(WindowInsetsCompat.Type.ime());
         }
-        // ★ 诊断：hide 是异步生效的（IME 有动画），所以延后再读一次真实状态。
-        //   验证完应删掉本段与 diag()。
-        getWindow().getDecorView().postDelayed(() -> diag("clearFocus: +300ms focused="
-                + getCurrentFocus() + " imeVisible="
-                + (c != null && c.isVisible(WindowInsetsCompat.Type.ime()))), 300);
+        // 诊断：hide 是异步的（IME 有动画），延后再读一次真实状态。
+        // ★ 确认键盘问题修好后，连同 diag()/isImeVisible() 一起删掉。
+        getWindow().getDecorView().postDelayed(
+                () -> diag("  +300ms: focused=" + getCurrentFocus()
+                        + " imeVisible=" + isImeVisible()), 300);
+    }
+
+    /**
+     * 诊断用：IME 现在是否可见。
+     *
+     * ★ isVisible() 在 **WindowInsetsCompat** 上，不在 WindowInsetsControllerCompat 上
+     *   （曾经写成 c.isVisible(...) 导致编译失败）。
+     *   拿 insets 要通过 ViewCompat.getRootWindowInsets(view)，且 view 必须已 attach。
+     */
+    private boolean isImeVisible() {
+        WindowInsetsCompat ins = ViewCompat.getRootWindowInsets(getWindow().getDecorView());
+        return ins != null && ins.isVisible(WindowInsetsCompat.Type.ime());
     }
 
     /**
      * ★ 临时诊断：把一行写进 launcher.log（界面日志区就能看到，不需要 adb）。
-     *   验证键盘问题后请连同调用点一起删除。
      */
     private void diag(String msg) {
         try (java.io.FileOutputStream o = new java.io.FileOutputStream(
