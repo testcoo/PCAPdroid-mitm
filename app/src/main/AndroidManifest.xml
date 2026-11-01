@@ -21,9 +21,14 @@
         android:supportsRtl="true"
         tools:targetApi="m">
 
+        <!-- windowSoftInputMode：
+               · adjustResize        键盘弹出时重排布局（日志区用 layout_weight，正是为此）
+               · stateAlwaysHidden   窗口首次显示/获得焦点时不自动弹键盘
+               只影响「窗口自己」弹键盘的时机，不影响用户主动点输入框时弹键盘。 -->
         <activity
             android:name=".LauncherActivity"
-            android:exported="true">
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize|stateAlwaysHidden">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -11,14 +11,18 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.View;
-import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
+
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.RandomAccessFile;
 
 /**
@@ -225,39 +229,49 @@ public class LauncherActivity extends Activity {
     /**
      * 让参数输入框失焦并收起软键盘。
      *
-     * 三个要点，缺一个就会「点一次只丢焦点、不收键盘，要点第二次才收」：
+     * ★ 用 androidx 的 WindowInsetsControllerCompat（声明式），不再用平台的
+     *   InputMethodManager.hideSoftInputFromWindow()。后者是「发一次 RPC 请求」，
+     *   在窗口处于焦点切换的过渡态时会被静默丢弃、或被随后的一次 show 覆盖。
+     *   真机复现就是：点空白**第一次只丢焦点不收键盘**，第二次才收。
+     *   声明式 API 改的是本窗口的 Insets 目标可见性，系统后续算 View 状态时
+     *   只要目标仍是不可见，就不会再拉起来。
      *
-     * ★ ① 顺序：**先清焦点，再收键盘**。
-     *   前一版是反着来的（先 getCurrentFocus() 取 token，再 clearFocus），
-     *   于是拿的是「输入框的」token，等于对着一个仍持有焦点的输入框收键盘 ——
-     *   系统认为输入目标还在，hide 请求被忽略。
+     * ★ 刻意**不**调 root.requestFocus()。
+     *   根布局设了 focusableInTouchMode，让它抢焦点会触发一次焦点重算
+     *   （ViewRootImpl.performTraversals → InputMethodManager.checkFocus），
+     *   在部分 ROM（尤其 MIUI）上这次重算会把刚发出的 hide 请求冲掉。
+     *   收键盘并不需要把焦点交给别的 View，清掉当前焦点即可。
+     *   （前提仍是根布局有 focusable + focusableInTouchMode —— 见 layout，
+     *    否则 clearFocus() 后框架可能把焦点还给唯一的 EditText。）
      *
-     * ★ ② 收键盘用**根布局的** token，不要依赖 getCurrentFocus()。
-     *   getCurrentFocus() 可能返回 null，一旦为 null，`if (focused != null)`
-     *   会把整个收键盘动作跳过 —— 焦点丢了、键盘却留着。
-     *   根布局只要已 attach 就一定有 token，不存在这个失败分支。
-     *
-     * ★ ③ 显式把焦点交给根布局（requestFocus），而不是让它「无主」。
-     *   否则输入框仍是窗口里唯一可获焦的 View，框架可能又把焦点还给它。
-     *   前提：根布局设了 focusable + focusableInTouchMode（见 layout）。
-     *
-     * 另外补一次 post()：焦点变化落到 InputMethodManager 内部是异步的，
-     * 部分 ROM 上同步调用的 hide 会被随后的焦点变化覆盖，下一帧再收一次兜住。
+     * ★ 也不再需要手工 post() 补第二次：声明式调用没有「被覆盖」的问题。
      */
     private void clearArgsFocus() {
-        View root = findViewById(R.id.root);
+        WindowInsetsControllerCompat c =
+                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+        diag("clearFocus: before focused=" + getCurrentFocus()
+                + " imeVisible=" + (c != null && c.isVisible(WindowInsetsCompat.Type.ime())));
         argsBox.clearFocus();
-        root.requestFocus();
-        if (root.getWindowToken() == null) {
-            return;                     // 还没 attach（理论上不会走到）
+        if (c != null) {
+            c.hide(WindowInsetsCompat.Type.ime());
         }
-        InputMethodManager imm =
-                (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-        if (imm == null) {
-            return;
+        // ★ 诊断：hide 是异步生效的（IME 有动画），所以延后再读一次真实状态。
+        //   验证完应删掉本段与 diag()。
+        getWindow().getDecorView().postDelayed(() -> diag("clearFocus: +300ms focused="
+                + getCurrentFocus() + " imeVisible="
+                + (c != null && c.isVisible(WindowInsetsCompat.Type.ime()))), 300);
+    }
+
+    /**
+     * ★ 临时诊断：把一行写进 launcher.log（界面日志区就能看到，不需要 adb）。
+     *   验证键盘问题后请连同调用点一起删除。
+     */
+    private void diag(String msg) {
+        try (java.io.FileOutputStream o = new java.io.FileOutputStream(
+                new File(getFilesDir(), "launcher.log"), true)) {
+            o.write(("[UI] " + msg + "\n").getBytes("UTF-8"));
+        } catch (Throwable ignored) {
         }
-        imm.hideSoftInputFromWindow(root.getWindowToken(), 0);
-        root.post(() -> imm.hideSoftInputFromWindow(root.getWindowToken(), 0));
     }
 
     // ------------------------------------------------------------ buttons

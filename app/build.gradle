@@ -22,10 +22,10 @@ android {
         applicationId "io.mitmlauncher"
         minSdk 24
         targetSdk 34
-        // v0.3.6：修「点空白处第一次只丢焦点、不收键盘」（clearArgsFocus 的顺序与 token 用错）。
+        // v0.3.7：引入 androidx.core，改用声明式 WindowInsetsController 收软键盘（修「第一次不收」）。
         // 每次要出 APK 前顺手 bump，装到手机上能一眼确认装的是哪一版。
-        versionCode 40
-        versionName "0.3.6"
+        versionCode 41
+        versionName "0.3.7"
 
         // see productFlavors below
         /*ndk {
@@ -94,4 +94,15 @@ android {
     namespace 'io.mitmlauncher'
 }
 
-dependencies {}
+dependencies {
+    // 只为 androidx.core.view 的 WindowInsetsControllerCompat / WindowCompat：
+    // 用声明式 API（controller.hide(Type.ime())）收起软键盘。
+    // 平台老接口 InputMethodManager.hideSoftInputFromWindow() 是「发一次 RPC 请求」，
+    // 在窗口处于焦点切换的过渡态时会被丢弃或被随后的 show 覆盖（真机复现：
+    // 点空白第一次不收、第二次才收）。声明式 API 改的是窗口的 Insets 目标状态，
+    // 天然免疫这种时序竞态。gradle.properties 里 android.useAndroidX=true 早已开着，
+    // 这里只是补一行依赖。
+    //
+    // ★ 版本受 compileSdk 限制（本项目 compileSdk 34），不用更新的 core。
+    implementation 'androidx.core:core:1.13.1'
+}
