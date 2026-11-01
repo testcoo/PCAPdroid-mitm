@@ -5,11 +5,13 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -17,13 +19,11 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.RandomAccessFile;
 
 /**
@@ -195,11 +195,13 @@ public class LauncherActivity extends Activity {
         copyLogButton.setOnClickListener(v -> copyLog());
         clearLogButton.setOnClickListener(v -> clearLog());
 
-        // ★ 点击空白处让输入框失焦（并收起键盘）。
-        //   EditText 的默认行为是「点外部不失焦」，所以要显式处理。
-        //   监听设在根布局上 = 只有点到没被其他控件消费的区域才触发，
-        //   点按钮/输入框时事件被它们自己消费，不受影响。
-        findViewById(R.id.root).setOnClickListener(v -> clearArgsFocus());
+        // ★ 「点空白处失焦」**不在这里**用 root.setOnClickListener 实现。
+        //   那套做法在本界面是失效的：日志区的 ScrollView 占了屏幕剩余的全部高度，
+        //   用户点的「空白」绝大多数落在它里面；而 ScrollView 的 onTouchEvent 会
+        //   消费 ACTION_DOWN（返回 true），事件就不再冒泡到 root 的 onClick。
+        //   真机证据：焦点在输入框、键盘已弹出时点空白 → 键盘不收且诊断日志一行都没有
+        //   （= clearArgsFocus() 根本没被调用，而不是 hide 无效）。
+        //   改用 dispatchTouchEvent() 按**坐标**判断，见下方重写。
 
         refreshButton();
         requestNotificationPermission();
@@ -228,12 +230,52 @@ public class LauncherActivity extends Activity {
     }
 
     /**
+     * 「点任意非输入框区域 ⇒ 输入框失焦 + 收起键盘」。
+     *
+     * ★ 为什么必须在 Activity 层拦触摸，而不是给某个布局设 setOnClickListener：
+     *   日志区的 ScrollView 占满了屏幕剩余高度（layout_weight=1），用户点的
+     *   「空白」绝大多数落在它里面。ScrollView 的 onTouchEvent 会对 ACTION_DOWN
+     *   返回 true（消费事件），事件**不再冒泡**到父布局的 onClick。
+     *   真机证据：焦点在输入框、键盘已弹出时点空白，键盘不收，且诊断日志一行都没写
+     *   —— 说明 clearArgsFocus() 根本没被调用（不是 hide 不生效）。
+     *   dispatchTouchEvent 是活动窗口里触摸事件的**总入口**，不受子 View 是否消费影响。
+     *
+     * ★ 用坐标判断而不是「谁处理了这次点击」：
+     *   先看当前焦点是否在输入框上（键盘没弹时零开销、不做任何事），
+     *   再看按下的点是否落在输入框的屏幕矩形内。不在里面 ⇒ 收键盘。
+     *
+     * ★ 只在 ACTION_DOWN 判定：
+     *   ① 此刻焦点还稳定在输入框上，且事件尚未分发给子 View；
+     *   ② 多指（ACTION_POINTER_DOWN）不需要额外处理，第一指按下时判定即可。
+     *
+     * ★ 必须 return super.dispatchTouchEvent(ev)：
+     *   我们只是「顺手」收键盘，不消费事件 —— 否则点击、滚动、按钮全部失灵。
+     *   副作用：在日志区上滑（ACTION_DOWN 即命中）也会收键盘，这正是想要的行为。
+     */
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN
+                && argsBox.isFocused() && !isTouchInside(argsBox, ev)) {
+            clearArgsFocus();
+        }
+        return super.dispatchTouchEvent(ev);
+    }
+
+    /** 按下的点是否落在这个 View 的屏幕矩形内（两者都用屏幕坐标，坐标系天然对齐）。 */
+    private boolean isTouchInside(View v, MotionEvent ev) {
+        Rect r = new Rect();
+        if (!v.getGlobalVisibleRect(r)) {
+            return false;               // 不可见 ⇒ 当作不在里面
+        }
+        return r.contains((int) ev.getRawX(), (int) ev.getRawY());
+    }
+
+    /**
      * 让参数输入框失焦并收起软键盘。
      *
-     * ★ 用 androidx 的 WindowInsetsControllerCompat（声明式），不再用平台的
+     * ★ 用 androidx 的 WindowInsetsControllerCompat（声明式），不用平台的
      *   InputMethodManager.hideSoftInputFromWindow()。后者是「发一次 RPC 请求」，
      *   在窗口处于焦点切换的过渡态时会被静默丢弃、或被随后的一次 show 覆盖。
-     *   真机复现就是：点空白**第一次只丢焦点不收键盘**，第二次才收。
      *   声明式 API 改的是本窗口的 Insets 目标可见性，系统后续算 View 状态时
      *   只要目标仍是不可见，就不会再拉起来。
      *
@@ -242,46 +284,18 @@ public class LauncherActivity extends Activity {
      *   （ViewRootImpl.performTraversals → InputMethodManager.checkFocus），
      *   在部分 ROM（尤其 MIUI）上这次重算会把刚发出的 hide 请求冲掉。
      *   收键盘并不需要把焦点交给别的 View，清掉当前焦点即可。
-     *   （前提仍是根布局有 focusable + focusableInTouchMode —— 见 layout，
-     *    否则 clearFocus() 后框架可能把焦点还给唯一的 EditText。）
      *
-     * ★ 也不再需要手工 post() 补第二次：声明式调用没有「被覆盖」的问题。
+     * ★ 不要用 ViewCompat.getRootWindowInsets() 去「验证」键盘是否收起：
+     *   它返回的是**最后一次分发的 insets 快照**，IME 的显隐变化是异步的，
+     *   紧接着读会拿到上一帧的旧值（真机实测过：键盘明明弹着却读出 imeVisible=false）。
+     *   要实时监听应该用 setOnApplyWindowInsetsListener / setWindowInsetsAnimationCallback。
      */
     private void clearArgsFocus() {
-        diag("clearFocus: focused=" + getCurrentFocus() + " imeVisible=" + isImeVisible());
         argsBox.clearFocus();
         WindowInsetsControllerCompat c =
                 WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
         if (c != null) {
             c.hide(WindowInsetsCompat.Type.ime());
-        }
-        // 诊断：hide 是异步的（IME 有动画），延后再读一次真实状态。
-        // ★ 确认键盘问题修好后，连同 diag()/isImeVisible() 一起删掉。
-        getWindow().getDecorView().postDelayed(
-                () -> diag("  +300ms: focused=" + getCurrentFocus()
-                        + " imeVisible=" + isImeVisible()), 300);
-    }
-
-    /**
-     * 诊断用：IME 现在是否可见。
-     *
-     * ★ isVisible() 在 **WindowInsetsCompat** 上，不在 WindowInsetsControllerCompat 上
-     *   （曾经写成 c.isVisible(...) 导致编译失败）。
-     *   拿 insets 要通过 ViewCompat.getRootWindowInsets(view)，且 view 必须已 attach。
-     */
-    private boolean isImeVisible() {
-        WindowInsetsCompat ins = ViewCompat.getRootWindowInsets(getWindow().getDecorView());
-        return ins != null && ins.isVisible(WindowInsetsCompat.Type.ime());
-    }
-
-    /**
-     * ★ 临时诊断：把一行写进 launcher.log（界面日志区就能看到，不需要 adb）。
-     */
-    private void diag(String msg) {
-        try (java.io.FileOutputStream o = new java.io.FileOutputStream(
-                new File(getFilesDir(), "launcher.log"), true)) {
-            o.write(("[UI] " + msg + "\n").getBytes("UTF-8"));
-        } catch (Throwable ignored) {
         }
     }
 

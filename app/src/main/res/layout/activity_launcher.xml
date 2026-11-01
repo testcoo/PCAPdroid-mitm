@@ -11,8 +11,15 @@
        —— TextView + ScrollingMovementMethod 无法用 fullScroll() 精确滚到底。
     4. 日志用 monospace：日志是等宽对齐的，等宽字体更易读。
 -->
+    <!--
+      focusable + focusableInTouchMode 是必要的：
+        clearArgsFocus() 调 argsBox.clearFocus() 后，如果窗口里没有别的可获焦
+        View，框架会把焦点又还给唯一的 EditText（键盘就收不掉）。
+        让根布局可获焦，它就成为「接替者」。
+      「点空白处失焦」不在布局层做，而在 Activity.dispatchTouchEvent 里按坐标判断
+      —— 因为日志区的 ScrollView 会消费掉点击，父布局的 onClick 收不到。
+    -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:focusable="true"
