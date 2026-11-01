@@ -10,6 +10,13 @@
     <!-- Android 13+ 前台服务通知要显示就必须有它，且要运行时申请；
          缺了的表现是「设置里通知是灰的、点不动」。 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- ★ CPU 唤醒锁：前台服务只保证「内存紧张时不杀你」，**不保证 CPU 不休眠**。
+         息屏后内核会进入 suspend，Python 的 asyncio 事件循环随之停摆，
+         外部发来的 TCP 握手就没人处理（表现：浏览器转圈直到超时）。
+         拿 PARTIAL_WAKE_LOCK 才能让 CPU 在息屏时继续跑。
+         ★ 只在代理真的跑起来之后才持有（见 LauncherService.acquireCpuLock），
+           平时不持有，避免白白耗电。 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- PyApplication is equivalent to Python.start -->
     <application

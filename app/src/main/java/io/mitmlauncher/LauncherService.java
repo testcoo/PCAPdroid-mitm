@@ -1,5 +1,6 @@
 package io.mitmlauncher;
 
+import android.annotation.SuppressLint;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -10,6 +11,7 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.os.Process;
 import android.util.Log;
 
@@ -120,6 +122,67 @@ public class LauncherService extends Service {
     private Thread watchdog;
     /** 心跳里附带的一句当前阶段说明，纯粹为了排查问题时好认。 */
     private volatile String phase = "starting";
+
+    // ------------------------------------------------------------ CPU 唤醒锁
+    /**
+     * ★ CPU 唤醒锁（PARTIAL_WAKE_LOCK）。
+     *
+     * 为什么必须有：`startForeground()` 只保证「内存紧张时进程不被回收」，
+     * **完全不保证 CPU 不休眠**。息屏后内核会进入 suspend，所有用户态线程
+     * （包括 Python 的 asyncio 事件循环）一起停转 ⇒ 外部来的 TCP 握手
+     * 虽然在网络栈（内核态）能被接住，但应用层没人 accept/处理 ⇒
+     * 浏览器表现是「转圈直到超时」。
+     *
+     * ★ 只在代理真的起来之后才 acquire，不是在 onCreate：
+     *   onCreate 时 mitmproxy 可能还没启动（甚至参数为空直接 return），
+     *   那时拿锁就是「代理没跑却在耗电」。acquire 放在 doStart() 的
+     *   startForegroundCompat() 之后；release 放在所有退出路径。
+     *
+     * ★ 为什么 acquire 不带超时：代理需要一直跑。代价是必须保证释放
+     *   （worker 的 finally / onDestroy 各放一次，release 幂等所以重复调无妨）。
+     *   注意 killSelf() 走 Process.killProcess，onDestroy 不会执行 ——
+     *   但内核会回收进程持有的全部 wake lock，这是安全的。
+     */
+    private PowerManager.WakeLock cpuLock;
+
+    /** 取名为「包名:用途」，方便在 `dumpsys power` 里认出是谁拿的锁。 */
+    private static final String CPU_LOCK_TAG = "MitmLauncher:cpu";
+
+    /**
+     * 拿住 CPU 锁。幂等：已持有就直接返回。
+     * ★ 用 @SuppressLint("WakelockTimeout") 是刻意的 —— 见 cpuLock 的说明。
+     */
+    @SuppressLint("WakelockTimeout")
+    private void acquireCpuLock() {
+        try {
+            if (cpuLock != null && cpuLock.isHeld()) {
+                return;
+            }
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm == null) {
+                return;
+            }
+            cpuLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, CPU_LOCK_TAG);
+            cpuLock.setReferenceCounted(false);   // 我们自己管配对，不让框架计数
+            cpuLock.acquire();
+            Log.i(TAG, "cpu wakelock acquired");
+        } catch (Throwable t) {
+            // 拿不到锁绝不能让服务崩：最坏情况退化成「息屏可能不响应」
+            Log.w(TAG, "acquire wakelock failed", t);
+        }
+    }
+
+    /** 释放 CPU 锁。幂等：没持有就什么都不做。 */
+    private void releaseCpuLock() {
+        try {
+            if (cpuLock != null && cpuLock.isHeld()) {
+                cpuLock.release();
+                Log.i(TAG, "cpu wakelock released");
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "release wakelock failed", t);
+        }
+    }
 
     /**
      * ★ 跨进程存活判断：读心跳文件的时间戳。主进程只能调这个版本。
@@ -241,6 +304,10 @@ public class LauncherService extends Service {
         // 必须在 5 秒内 startForeground，否则 ANR / 系统直接杀服务。
         // ★ 由于 onCreate 已经不再加载 Python，这一步是「立刻」发生的。
         startForegroundCompat(buildNotification("正在启动…", "正在初始化环境"));
+        // ★ 拿 CPU 唤醒锁：从这一刻起直到服务退场，CPU 不允许因息屏而 suspend。
+        //   放在 startForeground 之后（而不是 onCreate）：那时才确定「这次真的要跑」，
+        //   之前拿锁会在「参数为空直接 return」之类的情况下白白耗电。
+        acquireCpuLock();
         // ★ 立刻写一条 starting 回执（<50ms，早于任何 Python 代码执行）。
         //   界面因此一定会先看到「正在启动…」，而不是等 Python 冷启动完才有反应。
         //   看门狗的「从未收到任何状态」那条兜底也因此有了明确的计时起点。
@@ -278,6 +345,9 @@ public class LauncherService extends Service {
                 // 从工作线程收尾：停前台。
                 // ★ 走到这里说明 launcher.run() 返回了（正常关停，或已被 Python
                 //   内部兜底成 error）。状态文件已由 Python 写好，这里不再覆盖。
+                // ★ 先放 CPU 锁再停前台：退出路径上两个都要收，顺序无所谓，
+                //   但放锁一定不能漏（漏了就是息屏时白耗电）。
+                releaseCpuLock();
                 stopForegroundCompat();
                 stopSelf();
                 if (!"idle".equals(lastKnownState)) {
@@ -372,6 +442,9 @@ public class LauncherService extends Service {
         }
         sRunning = false;
         clearHeartbeat();
+        // ★ 兜底放锁：worker 的 finally 里已经放过一次，release 幂等所以重复调无害；
+        //   但 onDestroy 可能因「服务被系统回收」而被单独调用，那条路径没经过 worker。
+        releaseCpuLock();
         super.onDestroy();
     }
 

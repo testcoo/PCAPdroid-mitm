@@ -22,12 +22,10 @@ android {
         applicationId "io.mitmlauncher"
         minSdk 24
         targetSdk 34
-        // v0.3.9：修「点空白处收不掉键盘」——根因是 clearArgsFocus() 没被调用
-        //         （日志区的 ScrollView 消费了点击，父布局的 onClick 收不到）。
-        //         改用 Activity.dispatchTouchEvent 按坐标判断。
+        // v0.3.10：加 PARTIAL_WAKE_LOCK（息屏时代理不再因 CPU 休眠而失去响应）。
         // 每次要出 APK 前顺手 bump，装到手机上能一眼确认装的是哪一版。
-        versionCode 43
-        versionName "0.3.9"
+        versionCode 44
+        versionName "0.3.10"
 
         // see productFlavors below
         /*ndk {
