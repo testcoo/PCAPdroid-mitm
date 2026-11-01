@@ -23,3 +23,6 @@ __pycache__
 
 # 本地私有文档 —— 永不提交（放不上传的交接文档、笔记等）
 local-docs/
+
+# 提交消息的临时文件（用 git commit -F 时生成，用完即删）
+.git-commit-msg.txt
