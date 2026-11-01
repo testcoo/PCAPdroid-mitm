@@ -1,0 +1,60 @@
+v0.3.2: 日志改增量 append 渲染，修「新日志一来就跳回顶部」
+
+## 问题
+
+日志区有三层叠加的滚动缺陷：
+  1. 日志 TextView 开了 textIsSelectable（长按复制），它内部因此有一个 Editor
+     管光标/选区。setText() 替换全文后光标被归零，TextView 会向父 ScrollView
+     发「把光标滚进可视区」的请求 ⇒ 界面被强行滚回顶部。
+  2. 这个「程序性滚动」又被 setOnScrollChangeListener 误当成用户操作，把
+     autoScroll 置为 false ⇒ 之后再也不自动滚（永久失效）。
+  3. post(fullScroll) 与布局完成的顺序不确定 ⇒ 偶发。
+
+用户可见现象：滑到中间看历史，新日志一来跳回顶部；点启动/停止必定跳回顶部。
+
+## 修法：改用增量 append
+
+setText(全文) 会替换文本 → 光标归零 → 触发「滚进可视区」请求。
+append() 只往尾部追加、不替换文本 → 不产生该请求。**根因消失**，且带来
+附带收益：屏幕内容只增不减，用户翻历史时位置天然稳定；每轮只读新增字节，
+不再重读 64KB 并重排整段文本。
+
+具体改动（LauncherActivity）：
+  · tailLog 改为「按字节偏移增量读取 + append」
+  · 新增 logOffset（已消费到的字节偏移）；-1 表示需要冷启动
+  · 新增 coldStartLog()：首次/截断后铺最近一段（尾部 64KB 且最多 200 行）
+  · 新增 appendLogText()：超限时从头部裁剪，控制文本长度
+  · 新增 LOG_MAX_CHARS = 200_000：增量 append 的代价是文本只增不减，
+    必须有上限，超出后保留尾部一半并从换行处切开
+  · 删除 autoScroll / setOnScrollChangeListener / isScrolledToBottom
+    （不再需要状态位；每次刷新前现读 canScrollVertically(1)，原生 API
+     自动处理 padding/layout，无需容差系数）
+  · 删除已无用的 LOG_TAIL_LINES 与只写不读的 logSize
+  · buffer 显式设为 TextView.BufferType.EDITABLE，避免 append 因类型不符
+    而在内部隐式走一次 setText
+
+## 边界处理（增量渲染必须考虑的 4 点）
+
+  ① 只消费到最后一个 '\n' —— '\n' 是 ASCII，不会落在 UTF-8 多字节序列中间，
+     所以偏移永远停在字符边界，不切碎汉字
+  ② 没写完的半行留给下一轮，不显示残缺内容
+  ③ 文件变小（清空 / Python 重开）⇒ 丢弃偏移，重走冷启动
+  ④ 偏移按字节推进：用 chunk.getBytes("UTF-8").length 而不是 String.length()
+     （后者是 UTF-16 码元数，遇汉字/emoji 会与实际字节数不符，越推越偏致乱码）
+
+## 界面
+
+  · 清空按钮改回原生 Button 样式（原来只有文字，不明显），去掉
+    borderlessButtonStyle 与 12sp 字号
+  · 清空按钮移到「日志」标题右侧（原被 layout_weight=1 推到了屏幕另一端）
+  · 日志区保留 textIsSelectable（长按选中复制），滚动修好后不再冲突
+
+## 版本
+
+  · versionCode 36 / versionName "0.3.2"
+
+## 未做（已确认推迟）
+
+  · 复制当前日志 / 导出全部日志按钮
+  · 自定义 ScrollView 兜底（会破坏「拖选择手柄到边缘自动滚动」，先不加；
+    若真机实测仍有残留跳动再加）

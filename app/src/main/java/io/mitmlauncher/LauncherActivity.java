@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ScrollView;
@@ -32,7 +33,6 @@ public class LauncherActivity extends Activity {
 
     private static final String DEFAULT_ARGS = "-p 8080 --set connection_strategy=lazy";
     private static final long LOG_POLL_MS = 700;
-    private static final int LOG_TAIL_LINES = 80;
 
     private EditText argsBox;
     private Button toggleButton;
@@ -43,23 +43,30 @@ public class LauncherActivity extends Activity {
     /** statusView 的默认字色。出错时改成红色，恢复时切回来（不依赖主题资源）。 */
     private int defaultStatusColor;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private long logSize = -1;
 
     /**
-     * 日志自动滚动到底部。
+     * 已消费到的**字节偏移**（相对 launcher.log）。
      *
-     * ★ 为什么需要：早期用 {@code TextView + ScrollingMovementMethod}，每次
-     *   {@code setText()} 都会把滚动位置**重置到顶部** —— 也就是说日志一刷新，
-     *   用户眼前跳回旧内容，**根本看不到最新一行**。改成 ScrollView 后由我们来
-     *   决定滚到哪里。
-     *
-     * 用意：用户手动往上翻看历史时，不该被自动滚动「抢」回去。所以
-     *   · 默认开启自动滚底；
-     *   · 一旦用户手动上滑（离开底部），就自动关闭；
-     *   · 用户主动滑回底部，重新开启。
-     * 用一个开关按钮会让界面多一个控件，这里用「位置」隐式切换更轻。
+     * ★ 日志用「增量 append」渲染，不再每轮 setText 全文。原因见 {@link #tailLog()}。
+     *   约定：偏移**永远落在某个 '\n' 之后**，所以绝不会切断 UTF-8 多字节字符。
+     * {@code -1} = 需要冷启动（首次进入 / 文件被截断 / 清空日志后）。
      */
-    private boolean autoScroll = true;
+    private long logOffset = -1;
+
+    /**
+     * 界面日志文本的上限（字符数）。
+     *
+     * ★ 增量 append 的代价是「文本只增不减」，跑久了会一直吃内存。
+     *   这里设一个上限，超了就从头删一段。完整日志随时在 launcher.log 文件里，
+     *   界面只是「最近一段」，所以不需要留太多。
+     */
+    private static final int LOG_MAX_CHARS = 200_000;
+
+    /** 需要冷启动时（首次/截断后），从文件尾部读多少字节来还原「最近一段」。 */
+    private static final int LOG_COLD_BYTES = 64 * 1024;
+
+    /** 冷启动时最多铺多少行到界面上。 */
+    private static final int LOG_COLD_LINES = 200;
 
     /** status.txt 里最后处理过的序号（Python 侧单调递增）。用它判重，不用 lastModified。 */
     private long lastSeq = -1;
@@ -157,10 +164,11 @@ public class LauncherActivity extends Activity {
         toggleButton.setOnClickListener(v -> onToggleClicked());
         clearLogButton.setOnClickListener(v -> clearLog());
 
-        // 用户手动上滑看历史时不要把他拽回底部；滑回底部则恢复自动滚动。
-        logScroll.setOnScrollChangeListener((v, x, y, oldX, oldY) -> {
-            autoScroll = isScrolledToBottom();
-        });
+        // ★ 这里**不再**监听滚动位置。
+        //   原因是日志改用增量 append（见 tailLog），屏幕内容只增不减、位置天然
+        //   稳定；而 isScrolledToBottom 这类判断在「程序性滚动」下会被误导成用户
+        //   操作（那正是之前日志跳回顶部的元凶之一）。现在每次刷新前现读一次
+        //   canScrollVertically(1) 就够了，不需要任何状态位。
 
         refreshButton();
         requestNotificationPermission();
@@ -475,60 +483,147 @@ public class LauncherActivity extends Activity {
 
     // ------------------------------------------------------------ logging
     /**
-     * 读日志尾巴并刷到界面。
+     * 把 launcher.log 的新增部分**追加**到界面上（增量渲染）。
      *
-     * ★ 只在**文件长度变化**时才读（{@code size == logSize} 直接返回），所以空闲时
-     *   这一趟是零 I/O。但「长度变化」不等于「内容有新增」——文件被清空/重建时长度
-     *   会变小，那种情况也要刷新，所以用 {@code !=} 而不是 {@code >}。
+     * ★★ 为什么不用 {@code setText(全文)}：
+     *   日志 TextView 开了 {@code textIsSelectable}（为了长按复制），这会让它内部
+     *   有一个 Editor 在管光标/选区，同时让它可获焦。{@code setText()} 替换全文后
+     *   光标被归零，TextView 随后会向父 ScrollView 发「把光标滚进可视区」的请求，
+     *   于是**界面被强行滚回顶部** —— 而且这个「程序性滚动」还会被
+     *   onScrollChange 误当成用户操作，把自动滚动关掉，导致之后再也不自动滚。
+     *   {@code append()} 只往尾部追加、不替换文本，光标不动 ⇒ 不产生该请求。
      *
-     * 只读尾部 64KB 并取最后 LOG_TAIL_LINES 行：日志文件可能很大，全读会拖慢主线程。
+     *   附带收益：
+     *     · 屏幕位置天然稳定（内容只增不减），用户翻历史不会被打断；
+     *     · 每轮只读「新增的字节」，不再重读 64KB 并重排整段文本；
+     *     · 日志很长时也不会因为一次重排而掉帧。
+     *
+     * ★ 边界处理（一个都不能少，否则会出乱码/错位）：
+     *   ① 只消费到**最后一个 '\n' 为止** —— '\n' 是 ASCII，绝不会落在 UTF-8 多字节
+     *      序列中间，所以偏移永远停在字符边界上，不会切碎汉字；
+     *   ② 最后那个没写完的半行**留给下一轮**，避免显示残缺内容；
+     *   ③ 文件变小（被清空 / 新一轮 run 重开）⇒ 丢弃偏移，重走冷启动；
+     *   ④ 冷启动时读尾部 LOG_COLD_BYTES，并只保留最后 LOG_COLD_LINES 行。
      */
     private void tailLog() {
         File log = new File(getFilesDir(), "launcher.log");
         if (!log.exists()) {
+            // 文件被删了（现在不再会：清空走的是截断）。顺手把界面与偏移复位。
+            logOffset = -1;
             logView.setText("");
-            logSize = -1;
             return;
         }
+
         long size = log.length();
-        if (size == logSize) {
+        // 文件被截断或重建 ⇒ 之前记的偏移已失效。只有我们自己调 clearLog()
+        // 或 Python 重新 open 日志时才会变小（Python 用 mode="a"，正常是只增）。
+        if (size < logOffset) {
+            logOffset = -1;
+        }
+        if (size == logOffset) {
+            return;                     // 没有新内容，本轮零 I/O
+        }
+
+        if (logOffset < 0) {
+            coldStartLog(log, size);
             return;
         }
-        boolean shrank = logSize >= 0 && size < logSize;
-        logSize = size;
+
+        // ★ 只读新增区间 [logOffset, size)，并在最后一个 '\n' 处截断。
+        String chunk;
+        try (RandomAccessFile raf = new RandomAccessFile(log, "r")) {
+            raf.seek(logOffset);
+            byte[] buf = new byte[(int) (size - logOffset)];
+            raf.readFully(buf);
+            String raw = new String(buf, "UTF-8");
+            int lastNl = raw.lastIndexOf('\n');
+            if (lastNl < 0) {
+                return;                 // 新增部分还没有完整的一行，等下一轮
+            }
+            chunk = raw.substring(0, lastNl + 1);
+        } catch (Throwable t) {
+            Log.w(TAG, "read log failed", t);
+            return;
+        }
+        // ★ 偏移必须按**字节**推进，而 chunk 是解码后的字符串：
+        //   用 UTF-8 重新编码算长度，而不是 String.length()（后者是 UTF-16 码元数，
+        //   遇到汉字/emoji 会与实际写入文件的字节数不一致，越推越偏 → 乱码。
+        try {
+            logOffset += chunk.getBytes("UTF-8").length;
+        } catch (Throwable t) {
+            logOffset = -1;             // 极端情况下退回冷启动，宁可重铺也不要错位
+            return;
+        }
+        appendLogText(chunk);
+    }
+
+    /**
+     * 冷启动：把「最近一段」日志直接铺到界面上（首次进入、清空后、文件被截断后）。
+     *
+     * ★ 直接把尾部截断点当作 logOffset：这样下一轮就能从那里继续 append，
+     *   不会重复渲染。截断点是「最后一个 '\n' 之后」，同样保证字符边界安全。
+     */
+    private void coldStartLog(File log, long size) {
         StringBuilder sb = new StringBuilder();
         try (RandomAccessFile raf = new RandomAccessFile(log, "r")) {
-            long from = Math.max(0, size - 64 * 1024);
+            long from = Math.max(0, size - LOG_COLD_BYTES);
             raf.seek(from);
             byte[] buf = new byte[(int) (size - from)];
             raf.readFully(buf);
-            String all = new String(buf, "UTF-8");
-            String[] lines = all.split("\n");
-            int start = Math.max(0, lines.length - LOG_TAIL_LINES);
-            for (int i = start; i < lines.length; i++) {
-                sb.append(lines[i]).append('\n');
+            String raw = new String(buf, "UTF-8");
+            // 从 from 开始读可能正好切在某个字符/行的中间：丢掉第一行残片。
+            if (from > 0) {
+                int firstNl = raw.indexOf('\n');
+                raw = firstNl >= 0 ? raw.substring(firstNl + 1) : "";
             }
+            // 只保留最后 LOG_COLD_LINES 行，避免一次性铺太多。
+            String[] lines = raw.split("\n", -1);
+            int start = Math.max(0, lines.length - LOG_COLD_LINES);
+            sb.append(String.join("\n", java.util.Arrays.copyOfRange(lines, start, lines.length)));
         } catch (Throwable t) {
             sb.append("读日志失败: ").append(t);
         }
-        logView.setText(sb.toString());
+        logView.setText(sb.toString(), TextView.BufferType.EDITABLE);
+        logOffset = size;
+        // ★ 冷启动后直接贴到底部（这几行是新铺的，用户需要看到最新的末尾）。
+        logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+    }
 
-        // ★ 自动滚到底。
-        //   走到这里说明**文件大小已经变了**（开头 `size == logSize` 就 return 了），
-        //   所以只要不是「变小」（被清空/重建）就一定有新增内容。
-        //   ★ 不能拿「文本长度有没有变长」来判断：日志到 LOG_TAIL_LINES 行上限后，
-        //     长度就恒定不变了 —— 那样滚动会在跑满 80 行后**永久失效**。
-        if (autoScroll && !shrank) {
-            logScroll.post(() -> logScroll.fullScroll(ScrollView.FOCUS_DOWN));
+    /**
+     * 把一段新日志追加到界面，并在必要时从**头部**删掉一段，控制总长度。
+     *
+     * ★ 从头部删的原因是「增量」的另一面：文本只增不减会一直吃内存。
+     *   完整日志随时在 launcher.log 里，界面只保留最近一段即可。
+     */
+    private void appendLogText(String chunk) {
+        CharSequence cur = logView.getText();
+        int curLen = cur == null ? 0 : cur.length();
+        boolean atBottom = isAtBottom();
+
+        // ★ 位置必须在改动文本**之前**读，改动后 scrollY 不再可信。
+        if (curLen + chunk.length() > LOG_MAX_CHARS) {
+            // 超限：保留尾部 LOG_MAX_CHARS/2，并从换行处切开，避免切碎一行。
+            String all = cur.toString() + chunk;
+            int keepFrom = Math.max(0, all.length() - LOG_MAX_CHARS / 2);
+            int nl = all.indexOf('\n', keepFrom);
+            String trimmed = nl >= 0 ? all.substring(nl + 1) : all.substring(keepFrom);
+            logView.setText(trimmed, TextView.BufferType.EDITABLE);
+        } else {
+            // ★ 用 append 而不是 setText：只有 append 不替换全文，因而不会触发
+            //   「把光标滚进可视区」那个请求（见方法开头的说明）。
+            //   （buffer 已在 coldStartLog 里显式设为 EDITABLE，所以这里是真的
+            //   纯追加，不会因 buffer 类型不符而隐式走一次 setText。）
+            logView.append(chunk);
+        }
+
+        if (atBottom) {
+            logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
         }
     }
 
-    /** 是否已经滚到底（留 4dp 容差，避免像素取整导致永远判不到底）。 */
-    private boolean isScrolledToBottom() {
-        int childHeight = logScroll.getChildCount() > 0
-                ? logScroll.getChildAt(0).getHeight() : 0;
-        int tolerance = (int) (4 * getResources().getDisplayMetrics().density);
-        return logScroll.getScrollY() + logScroll.getHeight() >= childHeight - tolerance;
+    /** 是否已滚到底。原生 API，自动处理 padding / layout 状态，不需要容差系数。 */
+    private boolean isAtBottom() {
+        return !logScroll.canScrollVertically(1);
     }
 
     /**
@@ -552,8 +647,7 @@ public class LauncherActivity extends Activity {
                 Log.w(TAG, "clear log failed", t);
             }
         }
-        logSize = -1;
-        autoScroll = true;
+        logOffset = -1;         // 下一轮重走冷启动
         logView.setText("");
     }
 

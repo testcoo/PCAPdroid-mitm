@@ -22,10 +22,10 @@ android {
         applicationId "io.mitmlauncher"
         minSdk 24
         targetSdk 34
-        // v0.3.1：界面改用布局文件 + 包名迁移到 io.mitmlauncher。
+        // v0.3.2：日志改增量 append 渲染（修「跳回顶部」）+ 清空按钮改回原生样式。
         // 每次要出 APK 前顺手 bump，装到手机上能一眼确认装的是哪一版。
-        versionCode 35
-        versionName "0.3.1"
+        versionCode 36
+        versionName "0.3.2"
 
         // see productFlavors below
         /*ndk {

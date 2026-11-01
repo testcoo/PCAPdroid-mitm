@@ -67,29 +67,33 @@
         android:orientation="horizontal">
 
         <TextView
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:text="@string/log_label"
-            android:textSize="14sp"
+            android:textSize="17sp"
             android:textStyle="bold" />
 
         <Button
             android:id="@+id/clearLogButton"
-            style="?android:attr/borderlessButtonStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
             android:minWidth="0dp"
             android:paddingStart="12dp"
             android:paddingEnd="12dp"
-            android:text="@string/btn_clear_log"
-            android:textSize="13sp" />
+            android:text="@string/btn_clear_log" />
+
+        <!-- 占位：把剩余空间全部吃掉，按钮才会紧跟在标题右侧而不是被推到屏幕另一端 -->
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
     </LinearLayout>
 
     <!--
-      日志区：ScrollView 提供滚动与「滚到底」能力，内层 TextView 负责
-      可选中复制。两者 id 都要有：ScrollView 给 fullScroll() 用，
-      TextView 给 setText() 用。
+      日志区：ScrollView 提供滚动与「滚到底」能力，内层 TextView 负责显示与长按选中。
+      两者 id 都要有：ScrollView 给 fullScroll() / canScrollVertically() 用，
+      TextView 给 append() / getText() 用。
     -->
     <ScrollView
         android:id="@+id/logScroll"
