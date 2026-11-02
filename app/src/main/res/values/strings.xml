@@ -18,9 +18,9 @@
     <string name="set_perm_summary_missing">未授予</string>
     <string name="set_perm_summary_granted">已授予</string>
     <string name="set_workdir_title">工作目录路径</string>
-    <string name="set_workdir_copied">工作目录路径已复制</string>
+    <string name="set_workdir_copied">已复制工作目录路径</string>
     <string name="set_perm_open_failed">无法打开系统设置页，请手动前往系统设置授予权限</string>
 
     <!-- 首页：未运行且缺少文件访问权限时的红色提示（点击进设置页） -->
-    <string name="status_no_permission">未运行，缺少必要权限（点击设置）</string>
+    <string name="status_no_permission">未运行，缺少文件访问权限（点击设置）</string>
 </resources>
