@@ -197,6 +197,10 @@ public class LauncherActivity extends Activity {
         toggleButton.setOnClickListener(v -> onToggleClicked());
         copyLogButton.setOnClickListener(v -> copyLog());
         clearLogButton.setOnClickListener(v -> clearLog());
+        // ★ 点状态行也进设置页。它是「未运行，缺少必要权限（点击设置）」那句话的落地点 ——
+        //   文案里写了「点击设置」，那就必须真的能点，否则是误导。
+        //   运行中/出错时点它也无害（就是去设置页），所以不做状态判断。
+        statusView.setOnClickListener(v -> openSettings());
 
         // ★ 「点空白处失焦」**不在这里**用 root.setOnClickListener 实现。
         //   那套做法在本界面是失效的：日志区的 ScrollView 占了屏幕剩余的全部高度，
@@ -224,6 +228,55 @@ public class LauncherActivity extends Activity {
         //   恢复离开时的焦点状态，EditText 会记得自己曾是焦点并自动弹出输入法。
         //   放在 onResume 就覆盖了「首次进入 / 后台切回 / 多任务回来」全部路径。
         clearArgsFocus();
+        // ★ 重判状态行：用户很可能刚去设置页授完权限回来，权限状态变了，
+        //   那句红字提示要随之消失（或相反）。
+        //   这是「现查」而不是轮询 —— 权限只在回前台时可能变，700ms 查一次毫无意义。
+        //   ★ 不能直接调 applyState(state, lastDetail)：它开头有「和当前值相同就 return」
+        //     的判重，而我们传的正是当前值，会被挡掉，红字不会更新。
+        //     所以这里显式重建一次状态行文案（复用同一个 renderStatus 逻辑）。
+        renderStatusLine();
+    }
+
+    /**
+     * 按当前 state / detail / 权限状态重建状态行文案。
+     *
+     * 抽出来是因为有两个调用点：状态变化时（applyState 末尾），
+     * 以及回前台时（权限可能刚被授予/撤销）。
+     */
+    private void renderStatusLine() {
+        String text;
+        switch (state) {
+            case "running":
+                text = lastDetail.isEmpty() ? "运行中" : "运行中 · " + lastDetail;
+                break;
+            case "starting":
+                text = "正在启动…";
+                break;
+            case "stopping":
+                text = "正在停止…";
+                break;
+            case "error":
+                text = lastDetail.startsWith("启动失败") ? lastDetail : "启动失败：" + lastDetail;
+                break;
+            default:
+                // ★ 「未运行」时如果还没拿到文件访问权限，就换成红色提示。
+                //   理由：没有这个权限，用户写的 `-s 脚本.py` 这类相对路径根本用不了，
+                //   与其等他启动后才报错，不如在启动前就明确告诉他缺什么。
+                //   ★ 只在这个状态提示：一旦启动（starting/running）就不再提，
+                //     由用户自己决定 —— 静态参数（如仅 -p 8080）不需要该权限也能跑。
+                if (!Files.hasStorageAccess(this)) {
+                    showStatus(getString(R.string.status_no_permission), true);
+                    return;
+                }
+                text = "未运行";
+                break;
+        }
+        showStatus(text, "error".equals(state));
+    }
+
+    /** 打开设置页。菜单项和状态行点击共用。 */
+    private void openSettings() {
+        startActivity(new Intent(this, SettingsActivity.class));
     }
 
     @Override
@@ -249,7 +302,7 @@ public class LauncherActivity extends Activity {
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         if (item.getItemId() == R.id.action_settings) {
-            startActivity(new Intent(this, SettingsActivity.class));
+            openSettings();
             return true;
         }
         return super.onOptionsItemSelected(item);
@@ -501,34 +554,15 @@ public class LauncherActivity extends Activity {
             pendingSince = 0;
         }
         refreshButton();
-
-        String text;
-        switch (newState) {
-            case "running":
-                // ★ 到这里说明 mitmproxy 已经真的在监听了 ⇒ 这串参数是可用的，
-                //   记下来当作下次打开 App 的预填值。放在这里而不是「点了启动」时，
-                //   是为了不把失败/手误的配置变成下次的默认值。
-                saveArgsIfRunning();
-                text = detail.isEmpty() ? "运行中" : "运行中 · " + detail;
-                break;
-            case "starting":
-                text = "正在启动…";
-                break;
-            case "stopping":
-                text = "正在停止…";
-                break;
-            case "error":
-                // Python 侧的 detail 本身已经是「启动失败（端口被占用或参数有误），退出码 1」，
-                // 再拼一次前缀会变成「启动失败：启动失败（…）」，这里去重。
-                text = detail.startsWith("启动失败") ? detail : "启动失败：" + detail;
-                break;
-            default:
-                text = "未运行";
-                break;
+        // ★ 文案与颜色统一由 renderStatusLine 决定（那里也处理「未运行但缺权限」的红字）。
+        //   它读的是本方法刚更新过的 state / lastDetail。
+        if ("running".equals(newState)) {
+            // ★ 到这里说明 mitmproxy 已经真的在监听了 ⇒ 这串参数是可用的，
+            //   记下来当作下次打开 App 的预填值。放在这里而不是「点了启动」时，
+            //   是为了不把失败/手误的配置变成下次的默认值。
+            saveArgsIfRunning();
         }
-        // ★ 失败用红色直接写在界面上，不再弹 Toast：
-        //   Toast 一闪而过，且容易被用户当成普通提示忽略。
-        showStatus(text, "error".equals(newState));
+        renderStatusLine();
     }
 
     /**

@@ -1,13 +1,18 @@
 package io.mitmlauncher;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Intent;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.ListView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -43,6 +48,8 @@ import java.util.List;
  *   android:parentActivityName 自动生成的。
  */
 public class SettingsActivity extends Activity {
+
+    private static final String TAG = "MitmLauncherUI";
 
     /**
      * 设置项。用一个小模型 + 列表，是「加一项只改一处」的前提。
@@ -92,8 +99,10 @@ public class SettingsActivity extends Activity {
     private void rebuildRows() {
         rows.clear();
         rows.add(new Row(getString(R.string.set_perm_title),
-                getString(R.string.set_perm_summary_missing)));   // TODO commit 2：按真实权限显示
-        rows.add(new Row(getString(R.string.set_workdir_title), ""));   // TODO commit 2：显示真实路径
+                getString(Files.hasStorageAccess(this)
+                        ? R.string.set_perm_summary_granted
+                        : R.string.set_perm_summary_missing)));
+        rows.add(new Row(getString(R.string.set_workdir_title), Files.workDirPath()));
         ((RowAdapter) list.getAdapter()).notifyDataSetChanged();
     }
 
@@ -101,14 +110,52 @@ public class SettingsActivity extends Activity {
     private void onRowClicked(int position) {
         switch (position) {
             case 0:
-                // TODO commit 2：跳系统授权页
+                requestStorageAccess();
                 break;
             case 1:
-                // TODO commit 2：复制工作目录路径
+                copyWorkDir();
                 break;
             default:
                 break;
         }
+    }
+
+    /**
+     * 跳系统页让用户开启「所有文件访问权」。
+     *
+     * ★ 为什么不用 requestPermissions 走运行时权限：Android 11+ 的
+     *   MANAGE_EXTERNAL_STORAGE 是一个「特殊权限」，**不能**用 requestPermissions 申请，
+     *   必须把用户引到系统设置页自己开关。
+     *   而 Android 10 及以下才走运行时权限（此处简化为同样跳应用详情页，
+     *   在那一页里开关存储权限）。
+     *
+     * ★ 已经授权时不跳转，只给一句提示 —— 避免用户以为点了没反应。
+     *
+     * ★ 跳转要包 try/catch：极少部分 ROM 没有这个设置页，
+     *   一旦 ActivityNotFoundException 而没接，就是直接崩。
+     */
+    private void requestStorageAccess() {
+        if (Files.hasStorageAccess(this)) {
+            Toast.makeText(this, R.string.set_perm_summary_granted, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            startActivity(Files.buildStorageAccessIntent(this));
+        } catch (Throwable t) {
+            Log.w(TAG, "open storage settings failed", t);
+            Toast.makeText(this, R.string.set_perm_open_failed, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** 点击工作目录那一行时复制路径。 */
+    private void copyWorkDir() {
+        String path = Files.workDirPath();
+        ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (cm == null) {
+            return;
+        }
+        cm.setPrimaryClip(ClipData.newPlainText("workdir", path));
+        Toast.makeText(this, R.string.set_workdir_copied, Toast.LENGTH_SHORT).show();
     }
 
     @Override
