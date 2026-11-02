@@ -30,14 +30,13 @@
     android:paddingTop="16dp"
     android:paddingBottom="16dp">
 
-    <!-- 标题：字号比正文大一档，并用粗体把它和控件区分开 -->
+    <!-- 标题：字号比正文大一档 -->
     <TextView
         android:id="@+id/argsLabel"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="@string/args_label"
-        android:textSize="17sp"
-        android:textStyle="bold" />
+        android:textSize="17sp" />
 
     <!--
       参数输入框：多行，但**限高**。
@@ -94,8 +93,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/log_label"
-            android:textSize="17sp"
-            android:textStyle="bold" />
+            android:textSize="17sp" />
 
         <!-- 复制：高频操作，紧跟在标题右侧 -->
         <Button

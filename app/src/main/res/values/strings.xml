@@ -17,7 +17,7 @@
     <string name="set_perm_title">授予文件访问权限</string>
     <string name="set_perm_summary_missing">未授予</string>
     <string name="set_perm_summary_granted">已授予</string>
-    <string name="set_workdir_title">工作目录</string>
+    <string name="set_workdir_title">工作目录路径</string>
     <string name="set_workdir_copied">工作目录路径已复制</string>
     <string name="set_perm_open_failed">无法打开系统设置页，请手动前往系统设置授予权限</string>
 
