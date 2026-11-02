@@ -197,10 +197,10 @@ public class LauncherActivity extends Activity {
         toggleButton.setOnClickListener(v -> onToggleClicked());
         copyLogButton.setOnClickListener(v -> copyLog());
         clearLogButton.setOnClickListener(v -> clearLog());
-        // ★ 点状态行也进设置页。它是「未运行，缺少必要权限（点击设置）」那句话的落地点 ——
-        //   文案里写了「点击设置」，那就必须真的能点，否则是误导。
-        //   运行中/出错时点它也无害（就是去设置页），所以不做状态判断。
-        statusView.setOnClickListener(v -> openSettings());
+        // ★ 状态行的点击**只在「缺少必要权限」那句红字时**才生效，见 renderStatusLine()。
+        //   为什么不无条件可点：用户点空白处往往是为了收起输入法，如果那时状态行
+        //   恰好被点到，就会莫名其妙跳进设置页。只有文案里写了「（点击设置）」
+        //   的那一种状态才该响应点击 —— 文案说什么就做什么。
 
         // ★ 「点空白处失焦」**不在这里**用 root.setOnClickListener 实现。
         //   那套做法在本界面是失效的：日志区的 ScrollView 占了屏幕剩余的全部高度，
@@ -266,11 +266,19 @@ public class LauncherActivity extends Activity {
                 //     由用户自己决定 —— 静态参数（如仅 -p 8080）不需要该权限也能跑。
                 if (!Files.hasStorageAccess(this)) {
                     showStatus(getString(R.string.status_no_permission), true);
+                    // 文案里写了「点击设置」，所以在这一种状态下才让它可点
+                    statusView.setOnClickListener(v -> openSettings());
                     return;
                 }
                 text = "未运行";
                 break;
         }
+        // ★ 其余所有状态一律不可点。
+        //   必须**显式清掉**监听，而不是不管：本方法会被反复调用（状态变化、回前台），
+        //   如果只在缺权限时设置、此处不管，那么从「缺权限」变成「运行中」之后
+        //   旧监听依然在，点状态行仍会跳设置页。
+        //   用 null 清除是标准做法，事件会穿透到下层（等价于点到这里算点空白）。
+        statusView.setOnClickListener(null);
         showStatus(text, "error".equals(state));
     }
 
