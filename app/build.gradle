@@ -22,10 +22,11 @@ android {
         applicationId "io.mitmlauncher"
         minSdk 24
         targetSdk 34
-        // v0.3.10：加 PARTIAL_WAKE_LOCK（息屏时代理不再因 CPU 休眠而失去响应）。
+        // v0.4.0（M3）：设置页（文件访问权限 + 工作目录）、首页齿轮入口、
+        //         未运行时缺权限的红字提示、Python 侧 chdir 到工作目录。
         // 每次要出 APK 前顺手 bump，装到手机上能一眼确认装的是哪一版。
-        versionCode 44
-        versionName "0.3.10"
+        versionCode 45
+        versionName "0.4.0"
 
         // see productFlavors below
         /*ndk {

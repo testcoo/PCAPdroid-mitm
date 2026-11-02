@@ -329,7 +329,14 @@ public class LauncherService extends Service {
                 // 把状态回调传进 Python：Python 侧每次状态变化都会回调到这里。
                 // ★ 拆进程后这个回调**只服务通知刷新**（sUiListener 已删除），
                 //   界面的状态来源只剩 status.txt —— 那是唯一跨进程可靠的通道。
-                launcher.callAttr("run", args, new StateBridge());
+                //
+                // ★ 第二个参数是**工作目录**（Java 侧算好传进去，Python 侧 chdir 到它）：
+                //   这样用户写的相对路径（-s my.py / -w flows.mitm）都相对工作目录生效，
+                //   不必在 Java 侧去猜「哪个参数的值是路径」。
+                //   ★ 这里现算而不是随 Intent 传：路径是常量推导（Download/MitmLauncher），
+                //     没有跨进程状态，直接调 Files.workDirPath() 更简单，
+                //     也避免"Intent 里忘了带"这种错。
+                launcher.callAttr("run", args, Files.workDirPath(), new StateBridge());
             } catch (Throwable t) {
                 Log.e(TAG, "launcher.run failed", t);
                 // ★ 只在 Python 还没给出结论时才兜底写错，否则会把更具体的首因

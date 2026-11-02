@@ -473,14 +473,55 @@ async def _run_dump(args_text: str, callback=None):
     logging.info("[launcher] mitmdump stopped")
 
 
-def run(args_text: str, callback=None):
+def _chdir_workdir(workdir: str):
+    """把当前工作目录切到 workdir，让用户写的相对路径都相对它。
+
+    ★ 为什么用 chdir 而不是在 Java 侧替换参数里的路径：
+      要替换就得先知道「哪个参数的值是路径」，而 mitmproxy 的参数形式很多
+      （-s 脚本、-w 输出文件、--set key=value 其中 value 可能是路径…），
+      逐个识别既容易漏也容易错。chdir 一次对所有参数自动生效，
+      而且「导出时不写具体路径就落在工作目录」这件事也天然成立。
+      （上游 PCAPdroid-mitm 的 mitm.py 也是这么做的。）
+
+    ★ 目录不存在就尝试创建：用户可能还没写任何脚本/还没授权。
+    ★ 失败（权限不足、路径不存在等）**不抛异常**：代理本身仍然可以跑
+      （纯 -p 8080 这种参数不需要工作目录），只是相对路径不可用。
+      所以退化成「保持原工作目录」并记一条警告。
+    ★ 注意 os.chdir 影响进程内所有相对路径，包括 Python 的 import ——
+      若工作目录下有与标准库同名的 .py 可能被 import 到。上游已在生产中使用，
+      实践中可接受；这里把工作目录限制在 Download/MitmLauncher 也降低了风险。
+    """
+    if not workdir:
+        return
+    try:
+        os.makedirs(workdir, exist_ok=True)
+        os.chdir(workdir)
+        logging.info("[launcher] workdir = %s", os.getcwd())
+    except Exception:
+        logging.warning("[launcher] cannot chdir to %r, "
+                        "relative paths will not work:\n%s",
+                        workdir, traceback.format_exc())
+
+
+def run(args_text: str, workdir: str = "", callback=None):
     """由 Java 在后台线程调用；阻塞直到 stop() 或出错。
+
+    workdir：工作目录的绝对路径（Java 侧用 Files.workDirPath() 算好传进来）。
+             会在启动代理之前 chdir 到这里，于是用户写的**相对路径**都相对它
+             —— 例如 `-s my_addon.py` 就等于 `<workdir>/my_addon.py`，
+             `-w flows.mitm` 就等于写到 `<workdir>/flows.mitm`。
+             ★ 这样处理而不是在 Java 侧替换参数里的路径：
+               要替换就得知道哪个参数是路径（-s / -w / --set xxx= 各不相同），
+               既容易漏也容易错；而 chdir 一次对所有参数自动生效。
+               （上游 PCAPdroid-mitm 的 mitm.py 也是这么做的：os.chdir(addons_home)。）
+             ★ 空字符串 = 不改变工作目录（保持 Chaquopy 给的主进程主目录）。
 
     callback：Java 侧的 MitmListener 实例（可选），状态一变就回调过去。
     """
     global running, master
     _setup_logging()
     _patch_platform()
+    _chdir_workdir(workdir)
     running = True
     _set_state(STATE_STARTING, args_text, callback)
     logging.info("[launcher] start requested: %s", args_text)
