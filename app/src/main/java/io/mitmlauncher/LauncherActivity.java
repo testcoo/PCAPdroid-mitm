@@ -3,6 +3,7 @@ package io.mitmlauncher;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Rect;
@@ -11,6 +12,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
@@ -227,6 +230,29 @@ public class LauncherActivity extends Activity {
     protected void onDestroy() {
         handler.removeCallbacks(logPoller);
         super.onDestroy();
+    }
+
+    /**
+     * ActionBar 菜单：只有一个「设置」齿轮。
+     *
+     * ★ 用 res/menu/launcher.xml 且该项是 showAsAction="always"，
+     *   所以它是**直接显示在 ActionBar 上的图标**，点一下就进设置页。
+     *   （对比上游 addons.xml：那 3 个项多是 showAsAction="never"，
+     *    被收进右上角「⋮」溢出菜单，要再点一次才展开 —— 我们不要那样。）
+     */
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.launcher, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == R.id.action_settings) {
+            startActivity(new Intent(this, SettingsActivity.class));
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
     }
 
     /**

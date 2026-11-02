@@ -43,6 +43,22 @@
             </intent-filter>
         </activity>
 
+        <!-- 设置页。
+             ★ android:parentActivityName 是 ActionBar 左上角返回箭头的前提：
+               系统靠它知道"上一级"是谁，才画出箭头；点击返回箭头会以
+               android.R.id.home 送到 onOptionsItemSelected（见 SettingsActivity）。
+             ★ 同时声明 meta-data PARENT_ACTIVITY 是为了兼容 API 16 以下 —— 不过
+               本工程 minSdk 24，其实用不到；但两个属性成对声明是惯例，成本为零。 -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings"
+            android:parentActivityName=".LauncherActivity">
+            <meta-data
+                android:name="android.support.PARENT_ACTIVITY"
+                android:value=".LauncherActivity" />
+        </activity>
+
         <!-- ★ android:process=":mitm"：mitmproxy 跑在独立子进程里。
              为什么必须拆（M2a 真机踩到的两个 P0 都源于同进程）：
                ① 同进程 ⇒ Python 工作线程一旦卡住（mitmproxy 启动失败时在 asyncio

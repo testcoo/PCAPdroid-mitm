@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  设置页的根布局。
+
+  ★ 用 ListView 而不是手写若干行 LinearLayout，理由：
+    这个页面**必然会扩**（以后要加「导出日志」「导出 CA 证书」「mitmweb 开关」等）。
+    用 ListView 的话，加一项 = 数据列表里多一个元素 + onClick 多一个分支；
+    而手写布局要同时改 XML 和 Java 两处，删项还容易漏。详见 SettingsActivity 的说明。
+
+  ★ 只有一个 ListView，不需要空列表提示（当前固定 2 项，不会为空）。
+-->
+<ListView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/settingsList"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent" />

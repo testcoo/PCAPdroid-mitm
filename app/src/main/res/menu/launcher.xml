@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  首页的 ActionBar 菜单。
+
+  ★ 只有一个「设置」项，且必须 showAsAction="always"：
+    这样它才是**直接显示在 ActionBar 上的图标**，点一下就进设置页。
+    对比上游 addons.xml 的做法 —— 那里有 3 个项，其中两个 showAsAction="never"，
+    于是被收进右上角的「⋮」溢出菜单，要再点一次才展开。我们不要那样。
+      ifRoom  —— 空间够才显示成图标，不够就收进溢出菜单（不可预期，不用）
+      always  —— 始终显示成图标，直接可点（我们要的）
+      never   —— 收进溢出菜单
+
+  ★ android:icon 用白色 vector：ActionBar 图标不会被系统自动着色，
+    必须自己选白色（默认主题的 ActionBar 背景是深色）。
+-->
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/action_settings"
+        android:icon="@drawable/ic_settings"
+        android:showAsAction="always"
+        android:title="@string/settings" />
+
+</menu>
